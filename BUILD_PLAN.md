@@ -72,6 +72,13 @@ Top 10 win. Judges look at whatever is live at the 10 Nov deadline.
 
 ## Research — already done, not a thing to redo
 
+**Primary sources live in `research/`** — the competition rules PDF
+(`Dezerv Kids Competition.pdf`) and the actual research report
+(`Dezerv Hackathon Project Proposal & Research Report.pdf`) this section
+summarizes. The summary below is what sessions should work from day to
+day; go back to the PDFs themselves if a detail here ever seems
+incomplete or you need something this summary left out.
+
 Three insights came out of real interviews with teens (names anonymized
 in this doc's quotes — same names appear in the original research, not
 real identities for the purposes of this project):
