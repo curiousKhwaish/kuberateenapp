@@ -1,0 +1,244 @@
+# KuberaTeenApp — Build Plan
+
+**Its own dedicated repo, not part of Setuh.** Built for the Dezerv Kids
+Hackathon — a teen financial-literacy web app. Different product,
+different audience, different rules (it legally *can't* touch real money
+or real personal data, which is a different category of problem than
+anything Setuh solves). Started as a sibling folder inside the Setuh repo
+during planning, then moved out to its own git repo on 2026-11-03 so the
+whole commit history is unambiguously post-28-Oct, with nothing to explain
+to a judge about an older, unrelated history sitting next to it. Own Flask
+app, own templates/static, own Vercel deployment. The only thing it still
+shares with Setuh is the Supabase project (new, clearly prefixed tables —
+see Architecture below).
+
+If anything here ever needs to change, update this file in the same
+session as the decision — this is the one place future sessions (starting
+with tomorrow's) should be able to read cold and have full context.
+
+---
+
+## The competition — Dezerv Kids Hackathon (hackathon.dezerv.in)
+
+**Hard constraints:**
+- Build must start on/after 28 Oct 2026 — genuinely fresh code, no reusing
+  pre-existing projects.
+- **Submission locks 10 Nov 2026, 11:59 PM IST.** Don't change the
+  submitted link after that.
+- The live link must keep working until 14 Nov 2026 (top 3 present live
+  that day, from home, with a parent present).
+- **No real money** anywhere in the app — made-up amounts only.
+- **No real personal info** — no real names, phone numbers, addresses,
+  schools, or photos.
+- **No ads, no payment** — the app is free to use.
+- **Opens from a link, no download, no sign-in** — a judge must be able to
+  open it and use it immediately, no login wall.
+- Must be the team's own idea/design/decisions — tutorials, templates, and
+  no-code/AI tools are explicitly allowed as long as the thinking is
+  theirs.
+- Ages 8–18, teams of up to 3 in the same age group, judged against that
+  age group (Juniors vs. Seniors separately). One entry per
+  person/team. Judges' decision is final.
+- **Admin step, separate from the build:** a parent must register on
+  hackathon.dezerv.in (gives consent, stays in the loop). Parent gets
+  emailed if the team places top 10 (email sent 12 Nov); top 3 also get a
+  short tech-check call 13 Nov. *(Status as of this doc: unconfirmed
+  whether this registration has been done yet — check first thing.)*
+
+**The app must answer all 3 of these in one app, for both Juniors and
+Seniors:**
+1. **"Where did all my money go?"** — help them see what they spent and
+   what's left. Concretely (e.g. ₹500 shown as 25 samosas), not as a bare
+   number.
+2. **"How do I save for that cycle?"** — set a goal, watch themselves get
+   closer. E.g. "this ice cream pushes your cycle back 3 days."
+3. **"Can I buy this, Mum?"** — help them decide about money together with
+   their parent. E.g. a "can I buy this?" request a parent can approve.
+
+Plus an optional **"out-of-the-box" bonus**: any fresh idea that helps
+kids with money — a game, a savings challenge, something nobody's built.
+
+**Scoring, out of 100:**
+| Criterion | Points | Judged on |
+|---|---|---|
+| Answers the questions | 40 | Does it really help a kid see, save, and decide together? |
+| Easy to use | 25 | Can a new kid figure it out in 10 seconds? |
+| Creative | 20 | Have the judges seen this idea before? |
+| Money smarts | 15 | Does it build a real money habit (saving, spending wisely)? |
+
+Top 10 win. Judges look at whatever is live at the 10 Nov deadline.
+
+---
+
+## Research — already done, not a thing to redo
+
+Three insights came out of real interviews with teens (names anonymized
+in this doc's quotes — same names appear in the original research, not
+real identities for the purposes of this project):
+
+**Insight 1 — Passive spending, zero financial literacy.** Teens don't
+track spend or budget unless prompted. Fixed-allowance teens (₹2,000–5,000/
+month) often run out in 10–15 days, mostly on food, tuck shop, and local
+auto commute — all unmonitored routine spend, not one big purchase.
+
+**Insight 2 — Social "treat" crises, no emergency reserve.** An impromptu
+birthday treat or outing catches teens with their allowance already spent.
+They end up asking parents for extra money or awkwardly negotiating a bill
+split, because there's no dedicated buffer for exactly this situation.
+
+**Insight 3 — Two-tiered goal motivation.** Teens treat small self-funded
+goals (shoes, stationery) completely differently from big aspirational
+ones (MacBook, bike, CLAT/IIM Indore admission). For the big ones, tying
+the reward to a mutually agreed academic/personal milestone with a parent
+measurably doubles motivation — a shared checklist a parent can verify
+against keeps it honest and keeps them going.
+
+**ICP:** 15–20 year olds, financially dependent on parents. Either a fixed
+monthly allowance (₹2,000–5,000) or on-demand money as needs arise. Mostly
+digital wallets/UPI linked to a parent's account (FamPay, GPay, Amazon
+Pay), plus cash for small local spends. High-frequency spend categories:
+food/tuck shop, auto/travel, shopping, hobbies. Comfortable with automated
+approval thresholds (e.g. parent approval only needed above ₹500–1,000) —
+the friction they resent is asking permission for *small* everyday stuff,
+not oversight in general.
+
+---
+
+## Architecture decisions
+
+**Location:** `kuberateenapp/` at the repo root. Own Flask app (own
+`app.py`/package, own `requirements.txt`, own templates/static), **not**
+blueprints inside Setuh's `app/` package — this app can't share Setuh's
+auth (real email/password via Supabase Auth would collect info the
+competition rules forbid) or Setuh's domain (`*.setuh.co` is for paying
+tenants). Own Vercel project/URL.
+
+**Database:** same Supabase project as Setuh (saves a setup step under
+deadline pressure), but entirely new tables, clearly prefixed `kubera_`,
+so it's logically separate from `tenants`/`bookings`/etc. *(If this starts
+to feel like the wrong call once we're building — e.g. it makes Setuh's
+own schema harder to reason about — revisit and split to a dedicated
+Supabase project; it's a cheap change early, more annoying later.)*
+
+**No real sign-in, no real accounts:** when the link opens, the app
+silently gives the browser a random anonymous ID via a signed cookie (same
+trick `app/tenant.py` already uses for tenant preview links) — no email,
+no password, no real name, ever. A **"Teen view / Parent view" toggle**
+switches between the two sides of the app **in the same browser session**.
+This isn't a shortcut — it's actually the better match for the rules: the
+FAQ says the top 3 present live "from home, with a parent present," i.e.
+parent and teen looking at one screen together, not separate logins on
+separate devices. No pairing codes, no accounts, nothing to "sign in" to
+— the link just opens and works.
+
+---
+
+## Final feature list — 4 features, each mapped to a required question
+
+Originally scoped as 5 separate features from the research doc's "Top 5
+App Features" list. Collapsed to 4 during planning (2026-11-02) once it
+became clear two of them were really one mechanic wearing two names — see
+reasoning below. This is tighter, more original, and buys back some of the
+8-day schedule.
+
+### 1. Expense tracker — answers Q1 ("Where did all my money go?")
+Log a spend, see it rendered in **concrete units** (₹500 → "25 samosas" /
+auto-rides / whatever maps to the amount), not a bare number. Shows what's
+left. Visual categorization (food/tuck shop, auto/travel, shopping,
+hobbies) per the ICP's actual spend categories.
+
+### 2. Short-term goal = Cushion/Streak Wallet — answers Q2 (short-term tier)
+**This is the merged feature** — originally planned as two separate things
+(a "Goal Delay Calculator" and a "Peer-Pressure Emergency Cushion vault").
+They're one mechanic: the cushion *is* the short-term goal's savings pot,
+not a separate fund.
+
+- Teen does a daily check-in, saves a small fixed amount (e.g. ₹10) →
+  builds a **streak** → the streak balance *is* the Cushion Wallet.
+- When a social/emergency spend comes up (Insight 2), they spend from the
+  Cushion Wallet instead of asking a parent or raiding other savings.
+- Spending from the wallet **inserts refill days** before streak-saving
+  resumes toward the next short-term goal — that's what the delay
+  calculator is showing ("this pushes your goal back N days"). It's a
+  real recalculation off the same pot, not just flavor text.
+- **Gamification:** streak milestones (day 7, 15, 21, ...) unlock
+  collectible badge cards — a collector-card layer on top of the streak,
+  giving teens something to chase and show off.
+  - **Compliance note for when we actually build the cards:** card art
+    shows a nickname/avatar only, never a real name or photo — keeps
+    sharing compliant with the "no real personal info" rule.
+- **Demo problem and its fix:** a judge won't wait real days to see a
+  streak build. The live demo link opens with a **pre-seeded streak
+  already in progress** (e.g. "Day 6 of your streak, ₹60 saved") so the
+  full loop — check-in, badges, cushion spend, delay calc — is visible
+  within the "10-second test."
+
+### 3. Parent-approval request — answers Q3 ("Can I buy this, Mum?")
+Purchase above a parent-set threshold (per the ICP, ~₹500–1,000) triggers
+a real-time approval request the parent can approve/decline from their
+view. Below the threshold, it just logs — no friction for everyday small
+spends, which is exactly the friction teens said they resent (ICP, "zero
+approval friction" point).
+
+### 4. Long-term goal = Milestone Contract — the aspirational tier + bonus
+Big-ticket goals (MacBook, bike, CLAT/IIM Indore admission) are **not**
+funded by the daily streak — per Insight 3, teens don't realistically
+self-fund these from pocket money. Instead: teen + parent set a milestone
+together (an academic or behavioral target), progress is shown with
+nudge-style reminders ("you're falling behind on X — don't lose this
+goal"), and the parent verifies when the milestone is actually hit. No
+delay-calculator math here — this is accountability, not a cash pot. This
+is also the feature most likely to read as the "out-of-the-box" bonus to
+judges, since a parent-verified achievement contract isn't something a
+plain expense tracker would have.
+
+---
+
+## Day-by-day schedule
+
+Today (2026-11-02) is planning only — no code yet. Building starts
+tomorrow. 8 build days to the 10 Nov deadline, with a real-kid-testing
+checkpoint before the final polish day.
+
+| Day | Date | Focus |
+|---|---|---|
+| 1 | 3 Nov | Flask app scaffold, `kubera_*` Supabase tables, anonymous-session cookie, Teen/Parent toggle shell |
+| 2 | 4 Nov | Feature 1 — expense tracker (Q1) |
+| 3 | 5 Nov | Feature 2a — cushion/streak wallet core: check-in, streak count, balance, pre-seeded demo state |
+| 4 | 6 Nov | Feature 2b — badge/card gamification + delay calculator on cushion withdrawal |
+| 5 | 7 Nov | Feature 3 — parent-approval request flow (Q3) |
+| 6 | 8 Nov | Feature 4 — long-term milestone contract + parent verification + reminders |
+| 7 | 9 Nov | **Checkpoint.** Test with a real kid. Fix what surfaces. Polish for the "10-second test" (25 pts) |
+| 8 | 10 Nov | Final polish, deploy, submit **before** 11:59 PM IST — don't wait for deadline night |
+
+**Built-in cut line:** if Features 1–3 aren't solid by Day 5, Feature 4
+gets cut rather than submitting four half-working things — a broken
+feature scores worse on both "answers the questions" and "easy to use"
+than a missing one. This is a call to make honestly in the moment if it
+comes up, not a decision made in advance here.
+
+---
+
+## How these sessions run
+
+**Decided 2026-11-02:** `docs/PEDAGOGY.md`'s full teaching ceremony
+applies to this project too, same as Setuh — explain why before how,
+Khwaish types every command herself, 3 comprehension questions after each
+feature, logged to `reflections/understanding.md`, daily reflection to
+`reflections/daily.md`. This was a deliberate choice against the clock,
+made with the schedule above already accounting for the slower pace — not
+something to silently abandon if Day 5 feels tight. If the deadline
+pressure genuinely requires revisiting this, that's a conversation to have
+explicitly, not a quiet shortcut.
+
+`SETUH_BUILD_SPEC.md`'s A1–A9/Phase 1–9 progress checklist (Rule 10) does
+**not** apply here — that's Setuh's own curriculum, unrelated to this
+project. This file is KuberaTeenApp's equivalent reference point instead.
+
+---
+
+## Open items
+
+- [ ] Confirm parent registration on hackathon.dezerv.in is done (separate
+      from the build, but time-sensitive in its own right).
+- [ ] Decide who the "real kid" for Day 7's testing checkpoint will be.
