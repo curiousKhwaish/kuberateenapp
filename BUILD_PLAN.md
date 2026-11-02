@@ -106,12 +106,12 @@ not oversight in general.
 
 ## Architecture decisions
 
-**Location:** `kuberateenapp/` at the repo root. Own Flask app (own
-`app.py`/package, own `requirements.txt`, own templates/static), **not**
-blueprints inside Setuh's `app/` package — this app can't share Setuh's
-auth (real email/password via Supabase Auth would collect info the
-competition rules forbid) or Setuh's domain (`*.setuh.co` is for paying
-tenants). Own Vercel project/URL.
+**Location:** its own repo (`~/KhwaishProjects/kuberateenapp`), own Flask
+app (own `app.py`/package, own `requirements.txt`, own templates/static)
+— not blueprints inside Setuh's `app/` package. This app can't share
+Setuh's auth (real email/password via Supabase Auth would collect info the
+competition rules forbid) anyway. Own Vercel project, own deployment — see
+Deployment & URLs below for exactly where it's hosted.
 
 **Database:** same Supabase project as Setuh (saves a setup step under
 deadline pressure), but entirely new tables, clearly prefixed `kubera_`,
@@ -130,6 +130,46 @@ FAQ says the top 3 present live "from home, with a parent present," i.e.
 parent and teen looking at one screen together, not separate logins on
 separate devices. No pairing codes, no accounts, nothing to "sign in" to
 — the link just opens and works.
+
+---
+
+## Deployment & URLs
+
+**Decided 2026-11-03.** Two separate pages exist for two separate
+purposes — don't conflate them:
+
+1. **The judges' link (the actual product).** KuberaTeenApp deploys to its
+   own Vercel project and ships to judges on its **free `.vercel.app`
+   URL** (e.g. `kuberateenapp.vercel.app`) — not a `setuh.co` subdomain.
+   Reasons:
+   - **Shared-infra risk.** `*.setuh.co` is a wildcard that already routes
+     every subdomain through Setuh's own `app/tenant.py` tenant lookup,
+     into Setuh's own Flask app. Pointing one specific subdomain at a
+     completely different app (this one) means custom DNS overrides on
+     Setuh's live production domain — real risk of breaking Setuh's actual
+     tenant routing, not worth taking with days on the clock.
+   - **Keeps the "independent business" framing consistent.** This project
+     already moved to its own repo specifically so its history reads as
+     unambiguously its own. Hosting the submitted product on Setuh's
+     commercial domain would undo that — independent repo, dependent
+     domain sends a mixed signal about whose project this actually is.
+   - A `.vercel.app` URL fully satisfies the rules as written: "opens from
+     a link in a browser, no download, no sign-in." Nothing about a custom
+     domain is required.
+   - A real custom domain (e.g. `kuberateen.app`) is a fine later
+     upgrade if there's time and appetite for it — optional polish, never
+     something to let block the 10 Nov submission.
+
+2. **`kuberaapp.setuh.co` (the explainer page, built later, no deadline
+   pressure).** After the competition, KuberaTeenApp also gets a normal
+   Setuh tenant page — same `/newclient`-style process as any other
+   business (research → design system → build) — that tells the story
+   ("what we built for this competition, what the app is about") with one
+   primary button: **"Go have a look at the app"**, linking out to
+   wherever the real product is deployed (the `.vercel.app` URL above, or
+   its eventual custom domain). This page is presentation-only, not the
+   product — same split Setuh already draws for every tenant between the
+   presentation layer and the actual thing being presented.
 
 ---
 
