@@ -189,12 +189,61 @@ reasoning below. This is tighter, more original, and buys back some of the
 8-day schedule.
 
 ### 1. Expense tracker — answers Q1 ("Where did all my money go?")
-Log a spend, see it rendered in **concrete units** (₹500 → "25 samosas" /
-auto-rides / whatever maps to the amount), not a bare number. Shows what's
-left. Visual categorization (food/tuck shop, auto/travel, shopping,
-hobbies) per the ICP's actual spend categories.
+
+**Design locked 2026-11-02, after a long judgment-call discussion (worth
+reading if this section ever needs revisiting) — superseding the original
+"25 samosas" framing below.**
+
+- **A main pocket-money wallet balance**, separate from Feature 2's
+  streak/cushion pot — this is the "what's left" number. Parent tops it up
+  from their view; entirely simulated (just a number in the database), no
+  real bank or money, same as everywhere else in this app.
+- **Primary flow (what a judge sees/does):** wallet is pre-seeded as if the
+  parent already transferred money in. Teen taps a Kubera-branded **Pay**
+  button, enters the amount, and sees a **mocked GPay/FamPay/Amazon-Pay-
+  style picker screen** (required for the demo, not a cut-if-short
+  flourish — her call) with a short list of **preset payees with realistic
+  shop names** (e.g. "Bombay Stationery," "Sriram Vadewala," "Ola Cabs").
+  Picking a payee **auto-suggests the category** via a lookup table (payee
+  → category) — this is the "AI categorization," deliberately rule-based
+  lookup rather than real ML, since real pattern-detection ML was
+  considered and explicitly cut for scope (see below). If no payee matches
+  or the teen picks "other," they select a category manually from a
+  dropdown (snacks, movies, transport, bills, gifts, shopping, grocery) or
+  type a custom one. In the demo, be upfront that only some sample
+  transactions (e.g. 2 of 5) auto-match by payee; the rest are manual —
+  that's honest, not a bug.
+- **Secondary flow (fallback, lower priority, build only if time allows):**
+  a cash spend that never went through the wallet gets logged after the
+  fact — manually, or caught by a nightly nudge ("did you spend anything
+  today? how much, what for?"). Manual logging is NOT the primary demo
+  path; paying from the wallet already *is* the log, in one tap.
+- **Amount shown as raw ₹ at the moment of logging** — not a per-entry
+  "25 samosas" conversion (killed because not everyone eats samosas and
+  samosa prices vary, so the conversion is a tax on the reader, not a
+  help). An **optional weekly summary** may still use a concrete-unit
+  comparison ("this week = 2 movie tickets") since that's one calculation
+  a week, not one per entry.
+- **Category privacy by design:** categories stay broad on purpose (e.g.
+  "gifts," not who it's for) — parents get real transparency on spending
+  *patterns*, not surveillance on specifics. This keeps teens willing to
+  log honestly instead of avoiding the app.
+- **Explicitly cut for scope:** true pattern-based auto-categorization
+  (inferring e.g. "this is a commute/travel spend" from recurring amount +
+  time-of-day + period, across different payees) was considered and
+  deliberately dropped — real build cost for Day 1 of 8 with zero code
+  written yet, versus the lookup-table version above which gets most of
+  the "wow, this feels smart" effect for a fraction of the cost. Only
+  revisit as a stretch goal if Days 1–5 go smoothly.
 
 ### 2. Short-term goal = Cushion/Streak Wallet — answers Q2 (short-term tier)
+**Clarified 2026-11-02: this cushion/streak pot is a separate balance from
+Feature 1's main pocket-money wallet** — the daily ₹10 streak-save builds
+*this* pot specifically; everyday tuck-shop/auto/shopping spends come out
+of the main wallet and don't touch it. Keeping them separate was a
+deliberate call — mixing them would mean an ordinary samosa purchase eats
+into the emergency cushion too, defeating the point of having one.
+
 **This is the merged feature** — originally planned as two separate things
 (a "Goal Delay Calculator" and a "Peer-Pressure Emergency Cushion vault").
 They're one mechanic: the cushion *is* the short-term goal's savings pot,
