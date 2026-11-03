@@ -218,12 +218,30 @@ reading if this section ever needs revisiting) — superseding the original
   fact — manually, or caught by a nightly nudge ("did you spend anything
   today? how much, what for?"). Manual logging is NOT the primary demo
   path; paying from the wallet already *is* the log, in one tap.
+  **Built 2026-11-03:** a manually-logged cash expense is written to
+  `kubera_expenses` with `payee = null` (displayed as "(cash)" wherever
+  shown) but deliberately does **not** subtract from `kubera_wallets.
+  balance` — Khwaish's call: the wallet balance tracks digital/app money
+  only, cash is a separate real-world pool the app was never holding, so
+  logging a cash spend is pure record-keeping for the "where did it go"
+  picture, not a balance-affecting transaction.
 - **Amount shown as raw ₹ at the moment of logging** — not a per-entry
   "25 samosas" conversion (killed because not everyone eats samosas and
   samosa prices vary, so the conversion is a tax on the reader, not a
-  help). An **optional weekly summary** may still use a concrete-unit
-  comparison ("this week = 2 movie tickets") since that's one calculation
-  a week, not one per entry.
+  help). An **optional monthly summary** may still use a concrete-unit
+  comparison ("this month = 2 movie tickets") since that's one
+  calculation a month, not one per entry — monthly rather than weekly,
+  matching the ICP's actual pocket-money cycle (₹2,000–5,000/**month**).
+  **Built 2026-11-03:** the monthly summary picks from a small **tiered**
+  list of reference items instead of one fixed item, so the comparison
+  always reads naturally at whatever scale the monthly total actually is
+  — waffle (₹150), movie ticket (₹350), pair of wireless headphones
+  (₹2,000), foldable magnetic charger (₹3,500), pair of PUMA sneakers
+  (₹6,000, sized to the ₹2,000–5,000 pocket-money ICP range, not an
+  unrealistic big-ticket item like a phone). Picks the most expensive
+  tier the total still clears, then **rounds to a whole number** —
+  Khwaish's explicit call, no decimals ("11.1 movie tickets" reads as a
+  bug, not a feature).
 - **Category privacy by design:** categories stay broad on purpose (e.g.
   "gifts," not who it's for) — parents get real transparency on spending
   *patterns*, not surveillance on specifics. This keeps teens willing to
@@ -299,7 +317,7 @@ checkpoint before the final polish day.
 | Day | Date | Focus |
 |---|---|---|
 | 1 | 3 Nov | Flask app scaffold, `kubera_*` Supabase tables, anonymous-session cookie, Teen/Parent toggle shell |
-| 2 | 4 Nov | Feature 1 — expense tracker (Q1) |
+| 2 | 4 Nov | ~~Feature 1 — expense tracker (Q1)~~ **Done 2026-11-03, one day ahead of schedule.** |
 | 3 | 5 Nov | Feature 2a — cushion/streak wallet core: check-in, streak count, balance, pre-seeded demo state |
 | 4 | 6 Nov | Feature 2b — badge/card gamification + delay calculator on cushion withdrawal |
 | 5 | 7 Nov | Feature 3 — parent-approval request flow (Q3) |

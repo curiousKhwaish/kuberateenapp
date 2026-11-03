@@ -76,12 +76,54 @@ raw ₹ amounts). Next session should start by designing the
 `kubera_wallets` / `kubera_expenses` tables (not yet designed) before any
 Flask routes get built.
 
-**Paused 2026-11-03 mid-task, resume point:** about to design the
-`kubera_wallets` table. Open judgment call posed to Khwaish, answer
-pending (she wants to think on it overnight): should the wallet's starting
-balance be seeded **automatically** the moment a new `anon_id`/
-`kubera_sessions` row is created (same moment, so every new visitor
-instantly has demo money), or should it start at ₹0 and require a
-separate "parent tops up" action before the teen can spend anything? Ask
-her for her answer first thing next session before writing the table SQL
-— do not pick for her.
+**Resolved — wallet seeding (2026-11-03, next session):** Khwaish's call:
+the real-product rule stays ₹0 at creation, requiring a genuine "parent
+tops up" action — true to how pocket money actually works, and the
+honest design even though it's not what gets built for the demo. But
+since every visitor to the live judge link effectively *is* a demo
+visitor (no separate real user base behind it), the practical build
+decision is to **pre-seed ₹3,000 the moment a new `anon_id` is created**
+— same move already made for Feature 2's pre-seeded streak. Held firm
+when asked "what would change your mind?" ("No, I would not change my
+mind.").
+
+### Day 2 — complete (2026-11-03, same session as Day 1 close-out)
+
+Feature 1 (expense tracker) built fully, one day ahead of schedule.
+`kubera_wallets` and `kubera_expenses` tables, the Pay button + mocked
+payment picker, payee→category lookup (with honest manual fallback,
+"Other" dropped in favor of a believable second unmatched shop name,
+"Timely Treasures" — Khwaish's call), the pay-and-deduct logic, a
+`/history` page (category totals + full transaction list, totals shown
+above the list on purpose — a deliberate "10-second test" ordering
+call), manual cash-expense logging (does not touch wallet balance — see
+`BUILD_PLAN.md` Feature 1 section), and a tiered concrete-item monthly
+summary (also in `BUILD_PLAN.md`). Full reasoning for each lives in
+`BUILD_PLAN.md`'s Feature 1 section, kept current in the same session.
+
+**Mid-session product question, resolved:** Khwaish asked whether the
+payee→category matching should actually use real AI (an external
+API call) instead of the hardcoded lookup dictionary, since a wrong
+guess could just be corrected by the user. Talked through the real
+tradeoff — an external call adds live demo-reliability risk (network
+failure in front of judges) for marginal benefit over the free,
+zero-latency dictionary lookup. She chose to keep the rule-based
+lookup, deliberately keeping the "(auto-suggested)" label as intentional
+signaling of AI-ish ambition to judges without the actual risk — a real,
+considered call, not a shortcut. Surfaced in that discussion: there is
+currently **no way to edit a logged expense's category after the
+fact** — a genuine gap, not yet built, worth revisiting if there's time
+before submission.
+
+**Two real bugs hit and fixed this session** (both good diagnostic
+practice, detailed in `reflections/understanding.md`'s 2026-11-03
+entry): (1) the `amount > 0` check constraint on `kubera_expenses`
+silently never applied because the table had already been created by an
+earlier, pre-constraint version of the same `create table` statement —
+Postgres's "relation already exists" error was initially misread as
+harmless when it actually meant the newer blueprint never took effect;
+fixed by dropping and recreating the table, then re-verified with a real
+insert test. (2) `ModuleNotFoundError: No module named 'supabase'` when
+running `python app.py` from a `(base)` conda prompt instead of the
+project's `venv` — the library was never missing, just installed into a
+different Python environment than the one actually running.
