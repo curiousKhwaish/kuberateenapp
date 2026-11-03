@@ -127,3 +127,53 @@ insert test. (2) `ModuleNotFoundError: No module named 'supabase'` when
 running `python app.py` from a `(base)` conda prompt instead of the
 project's `venv` — the library was never missing, just installed into a
 different Python environment than the one actually running.
+
+### Day 3 + Day 4 — complete (2026-11-03, same session)
+
+Cushion/streak wallet core, badges, Shields, and the full Refill Mode
+debt system all built and verified working, two days ahead of schedule.
+Full technical spec lives in `BUILD_PLAN.md`'s Feature 2 section
+(kept current in the same session, as required). Key decisions, in
+order:
+
+- **Streak resets to 0 on a missed day (unless Shield-protected);
+  `cushion_balance` never resets** — Khwaish's call, protecting real
+  money/trust while still using the streak as the habit motivator.
+- **Full Shield + dual-card gamification system** built as originally
+  designed by Khwaish (2-shield cap, 30-day rolling expiry per shield,
+  5-day cooldown between uses, weekly cards every 7 streak days,
+  milestone cards at ₹100 then every ₹500) — a deliberate, eyes-open
+  scope expansion over the original lighter Day 4 plan, made explicitly
+  while still ahead of schedule (Rule 13 triage reasoning, not silent
+  creep). Milestone card art later simplified to one shared style
+  (not per-tier-unique) to control scope further.
+- **Refill Mode**, a full state-machine delay-calculator (not just a
+  popup message): spending from the cushion sets a Debt Counter (flat
+  ₹100 for ₹0–700 withdrawals, scaling above that), freezes the streak
+  and `cushion_balance`, and routes daily deposits 100% into the debt
+  until cleared — at which point any overpayment becomes real savings
+  immediately, and normal streak/cushion growth resumes the *next* day.
+  Designed by Khwaish in very precise, example-driven detail across
+  several rounds — each example caught and corrected an assumption
+  the assistant had made (notably: cushion does NOT grow in parallel
+  with debt repayment, deposits are variable-amount in both normal and
+  Refill Mode, not flat ₹10).
+- **Deposits became variable-amount** (min ₹10, no cap) for both normal
+  check-ins and Refill Mode repayments, per Khwaish's original spec —
+  required changing the single-click check-in button into a small form,
+  and changing milestone-badge detection from exact-equality to
+  "crossed the threshold," since a variable deposit can jump past a
+  round number without landing on it exactly.
+
+**Real debugging time, worth recording honestly:** a significant chunk
+of this session (~30+ messages) went into Khwaish repeatedly reporting
+"the cushion isn't updating" when the app was actually working
+correctly the whole time — she kept re-triggering the intentional
+"one check-in per day" rule without reading the exact confirmation
+message or checking the real stored data, which made intermittent
+"it works / it doesn't" reports hard to diagnose from chat alone. Only
+resolved once she read the raw `kubera_streaks` row directly via Table
+Editor. Genuinely useful as a live case of `docs/PEDAGOGY.md` Rule 9
+(diagnose before escalating) — logged in `reflections/understanding.md`
+as this task's Q3 — but also a real time cost worth naming plainly, not
+glossing over, given the 8-day clock.

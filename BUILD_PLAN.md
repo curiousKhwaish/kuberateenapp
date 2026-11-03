@@ -275,12 +275,86 @@ not a separate fund.
   resumes toward the next short-term goal — that's what the delay
   calculator is showing ("this pushes your goal back N days"). It's a
   real recalculation off the same pot, not just flavor text.
-- **Gamification:** streak milestones (day 7, 15, 21, ...) unlock
-  collectible badge cards — a collector-card layer on top of the streak,
-  giving teens something to chase and show off.
+- **Gamification — expanded design, locked 2026-11-03 (Day 3 session):**
+  a collector-card layer on top of the streak, giving teens something to
+  chase and show off. Originally scoped as simple day-count badges (day
+  7, 15, 21...); Khwaish designed a considerably fuller system this
+  session, built the same day it was designed, consciously accepting the
+  schedule cost (see Day-by-day schedule note below).
+  - **Streak vs. money are tracked separately, and behave differently on
+    a miss.** `cushion_balance` (real ₹ saved) **never resets** — missing
+    a day doesn't cost the teen any money already saved, protecting real
+    progress and trust in the app. `streak_count` **does reset to 0** on
+    a missed day, *unless* a Shield protects it (below) — the streak is
+    the motivator, the money is the thing that actually matters.
+  - **Cushion balance accumulates indefinitely, month to month** — no
+    monthly reset. ₹10/day saved and not spent on an emergency just
+    keeps compounding; this was already true of the basic design, no
+    extra code needed for it.
+  - **Dual-track cards:**
+    - *Weekly cards* — ongoing, for streak consistency (every 7 days of
+      streak: day 7, 14, 21, ...).
+    - *Milestone cards* — for cumulative cushion savings hitting ₹100,
+      then every multiple of ₹500 after that (₹500, ₹1,000, ₹1,500,
+      ₹2,000, ...). **Simplified 2026-11-03:** all milestone cards share
+      one visual style (distinct from the weekly cards' style), no
+      per-tier special-casing — keeps the card art scope flat regardless
+      of how high savings climb.
+  - **Shield system (habit insurance), with guardrails:**
+    - Earned automatically on completing a 7-day streak (i.e. every time
+      a weekly card unlocks) — **only if** the teen is currently holding
+      fewer than the inventory cap.
+    - **Inventory cap: 2 shields held at once**, max — a new one isn't
+      granted past the cap.
+    - **Expiry: 30 days, rolling, from the exact date each shield was
+      earned** — tracked per-shield, not just as a count, since two held
+      shields can have different earn dates and therefore different
+      expiry dates.
+    - **Usage rule: a shield can only be used once every 5+ days of
+      normal saving** — i.e. no two shields used back-to-back; there
+      must be a real gap of at least 5 days between any two shield uses.
+    - When a streak would otherwise reset (a missed day, no check-in),
+      an eligible shield is consumed automatically instead: the streak
+      is preserved, that day's ₹10 just doesn't get added, and the
+      5-day usage cooldown starts from that point.
   - **Compliance note for when we actually build the cards:** card art
     shows a nickname/avatar only, never a real name or photo — keeps
     sharing compliant with the "no real personal info" rule.
+  - **Refill Mode (the delay calculator, built as a real mechanic, not
+    just a popup) — locked 2026-11-03, built and verified same session:**
+    - Deposits are **variable amounts** (min ₹10, no upper limit) in
+      *both* normal check-ins and Refill Mode repayments — not a flat
+      ₹10. This changed the check-in button into a small form.
+    - Milestone badges trigger on **crossing** a threshold (₹100, then
+      every ₹500), not exact equality — required once deposits became
+      variable, since a jump could skip straight over a threshold.
+    - **Spending from the cushion:** shows a "Withdrawing ₹X pushes your
+      goal back Y days" confirmation screen before acting. On confirm,
+      `cushion_balance` drops immediately by the withdrawn amount (the
+      money is really gone), and a **Debt Counter** is set: flat ₹100
+      for any withdrawal ₹0–₹700, then **+₹50 per additional ₹200**
+      above ₹700. Days shown in the popup = debt ÷ ₹10.
+    - **While debt > 0 (Refill Mode):** the streak freezes (doesn't
+      reset to 0 — spending isn't the same as missing a day). Each
+      check-in's deposit goes **100% toward the debt**, and
+      `cushion_balance` stays **frozen** at the post-withdrawal amount —
+      it does not grow in parallel with debt repayment.
+    - **Overpaying the debt:** if a deposit exceeds the remaining debt,
+      the debt clears to exactly ₹0 and the leftover goes straight into
+      `cushion_balance` as real savings in that same action (and can
+      trigger a milestone badge) — no money is lost.
+    - **Resuming:** the check-in that clears the debt to ₹0 is still
+      just a debt-clearing action — streak doesn't move that same day.
+      The *next* day's check-in is the first one that resumes normal
+      streak-building and cushion growth, continuing from the frozen
+      streak number (not restarting it).
+    - **Can't stack withdrawals:** a second emergency spend is blocked
+      with a message while `debt_remaining > 0` — pay off the current
+      one first.
+    - **One check-in (of any kind — normal, debt repayment, or the
+      check-in that clears debt) per calendar day**, enforced by a
+      single `last_checkin` date field — this is intentional and uniform
+      across all three cases, not a special case per mode.
 - **Demo problem and its fix:** a judge won't wait real days to see a
   streak build. The live demo link opens with a **pre-seeded streak
   already in progress** (e.g. "Day 6 of your streak, ₹60 saved") so the
@@ -318,8 +392,8 @@ checkpoint before the final polish day.
 |---|---|---|
 | 1 | 3 Nov | Flask app scaffold, `kubera_*` Supabase tables, anonymous-session cookie, Teen/Parent toggle shell |
 | 2 | 4 Nov | ~~Feature 1 — expense tracker (Q1)~~ **Done 2026-11-03, one day ahead of schedule.** |
-| 3 | 5 Nov | Feature 2a — cushion/streak wallet core: check-in, streak count, balance, pre-seeded demo state |
-| 4 | 6 Nov | Feature 2b — badge/card gamification + delay calculator on cushion withdrawal |
+| 3 | 5 Nov | ~~Feature 2a — cushion/streak wallet core~~ **Done 2026-11-03, two days ahead of schedule.** |
+| 4 | 6 Nov | ~~Feature 2b — badge/card gamification + delay calculator~~ **Done 2026-11-03, same session — built bigger than originally scoped (Shields, Refill Mode state machine); see Feature 2 section above.** |
 | 5 | 7 Nov | Feature 3 — parent-approval request flow (Q3) |
 | 6 | 8 Nov | Feature 4 — long-term milestone contract + parent verification + reminders |
 | 7 | 9 Nov | **Checkpoint.** Test with a real kid. Fix what surfaces. Polish for the "10-second test" (25 pts) |
@@ -330,6 +404,15 @@ gets cut rather than submitting four half-working things — a broken
 feature scores worse on both "answers the questions" and "easy to use"
 than a missing one. This is a call to make honestly in the moment if it
 comes up, not a decision made in advance here.
+
+**Schedule note, 2026-11-03:** Feature 2's gamification (above) grew
+considerably past its original Day 4 scope — full Shield system with
+expiry/cooldown tracking, dual card tracks — a deliberate, eyes-open
+call by Khwaish, made while still a day ahead of schedule (Feature 1
+finished on Day 2's slot, a day early). Built the same session it was
+designed. If this ends up pushing Days 4-5 later than planned, the
+built-in cut line above is still the backstop — flag it honestly in the
+moment rather than quietly absorbing the slip.
 
 ---
 
