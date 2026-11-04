@@ -325,15 +325,30 @@ not a separate fund.
     - Deposits are **variable amounts** (min ₹10, no upper limit) in
       *both* normal check-ins and Refill Mode repayments — not a flat
       ₹10. This changed the check-in button into a small form.
-    - Milestone badges trigger on **crossing** a threshold (₹100, then
-      every ₹500), not exact equality — required once deposits became
-      variable, since a jump could skip straight over a threshold.
+    - Milestone badges trigger on **crossing** a threshold, not exact
+      equality — required once deposits became variable, since a jump
+      could skip straight over a threshold. **Revised 2026-11-03** (after
+      reviewing a "Kubera Coin & Goal System" dev spec that also proposed
+      a new, separate virtual-currency layer — that part deferred to
+      Feature 4 on Day 6, but these two number changes were pulled
+      forward and applied the same session since they correct Feature 2
+      itself): the threshold list is no longer an even ₹500 spacing from
+      the start. It's now **₹100, ₹500, ₹750, ₹1,000, then every ₹500
+      after that** (₹1,500, ₹2,000, ₹2,500, ...) — front-loaded early
+      wins for a new saver, settling into a steady rhythm once the pot
+      is bigger. Implemented as `MILESTONE_THRESHOLDS = [100, 500, 750,
+      1000]` plus a ₹500 step after 1000, in `all_milestones_upto()` /
+      `crossed_milestones()` in `app.py`.
     - **Spending from the cushion:** shows a "Withdrawing ₹X pushes your
       goal back Y days" confirmation screen before acting. On confirm,
       `cushion_balance` drops immediately by the withdrawn amount (the
       money is really gone), and a **Debt Counter** is set: flat ₹100
-      for any withdrawal ₹0–₹700, then **+₹50 per additional ₹200**
-      above ₹700. Days shown in the popup = debt ÷ ₹10.
+      for any withdrawal ₹0–₹300, then **+₹50 per additional ₹200**
+      above ₹300 (`compute_debt()` in `app.py`). **Revised 2026-11-03**
+      from the original ₹700 threshold — same dev-spec review as above;
+      this number was corrected in place rather than deferred, since
+      Feature 2's debt math is already live. Days shown in the popup =
+      debt ÷ ₹10.
     - **While debt > 0 (Refill Mode):** the streak freezes (doesn't
       reset to 0 — spending isn't the same as missing a day). Each
       check-in's deposit goes **100% toward the debt**, and
@@ -357,9 +372,19 @@ not a separate fund.
       across all three cases, not a special case per mode.
 - **Demo problem and its fix:** a judge won't wait real days to see a
   streak build. The live demo link opens with a **pre-seeded streak
-  already in progress** (e.g. "Day 6 of your streak, ₹60 saved") so the
-  full loop — check-in, badges, cushion spend, delay calc — is visible
-  within the "10-second test."
+  already in progress** so the full loop — check-in, badges, cushion
+  spend, delay calc — is visible within the "10-second test."
+  **Ideal starting point, locked 2026-11-03:** wallet balance ₹3,000,
+  streak Day 6, cushion ₹90. Deliberate numbers, not arbitrary — a judge
+  doing the **minimum ₹10 check-in** pushes cushion from ₹90 to exactly
+  ₹100 *and* streak from Day 6 to Day 7, so **one single check-in fires
+  both a milestone card (₹100 crossing) and a weekly card (Day 7) at
+  once** — the richest possible first impression from the smallest
+  possible judge action. **Kubera Coins are deliberately not part of
+  this seed** — reviewed 2026-11-03 (see Feature 4 note above), decided
+  to demo the weekly/milestone cards as already built and explain
+  coins/Main Goal as coming in a later build session, rather than pull
+  Feature 4 forward ahead of Feature 3.
 
 ### 3. Parent-approval request — answers Q3 ("Can I buy this, Mum?")
 Purchase above a parent-set threshold (per the ICP, ~₹500–1,000) triggers
@@ -367,6 +392,44 @@ a real-time approval request the parent can approve/decline from their
 view. Below the threshold, it just logs — no friction for everyday small
 spends, which is exactly the friction teens said they resent (ICP, "zero
 approval friction" point).
+
+**Built 2026-11-03, four days ahead of schedule:**
+- **Threshold is parent-editable** (a deliberate call over hardcoding —
+  `kubera_wallets.approval_threshold`, defaults to ₹1,000), not baked into
+  the code. `/pay/<payee>` checks the amount against it before touching
+  the wallet or logging anything — ordering matters here specifically so
+  a decline is real (money never moved) rather than theater, which is the
+  actual reason the parent's role stays meaningful.
+- Over-threshold spends write a row to `kubera_approval_requests`
+  (`status`: `pending`/`approved`/`declined`) instead of completing
+  immediately. Parent view (`/parent/requests`) lists pending ones as the
+  teen's own quoted question ("Can I spend ₹X at Y?") next to the current
+  wallet balance, plus Approved/Declined history below.
+- **Approve** re-checks the wallet balance at decision time (not the
+  balance from when the request was made) before logging the expense and
+  deducting — guards against the teen having spent the money elsewhere
+  while the request sat pending.
+- **Decline** only flips the status; no money moves. Resending the exact
+  same request after a decline is **deliberately unblocked** — Khwaish's
+  call after weighing both sides (spam-pressure risk vs. trapping a
+  legitimate "we talked, go ahead" re-ask): trust a 15–20 year old to be
+  mindful about when to re-ask, don't engineer friction into it.
+- **Parent view scoped down** to only wallet balance, pending/approved/
+  declined requests, and badges earned — `view_mode` now actually changes
+  what the home page fetches and shows, not just a cosmetic label like it
+  was through Day 1–4.
+- **Teen-side status, two different mechanisms doing two different jobs:**
+  a persistent ⏳ banner for still-pending requests (re-reads `status`
+  fresh every page load, no memory needed — it's always just telling the
+  truth about right now), and a one-time ✅/❌ toast for newly-resolved
+  ones (a `seen_by_teen` boolean flips `true` the instant it's shown, so
+  it never reappears — this is a one-time *event*, not a live state, so it
+  needs its own memory). The toast also auto-hides after ~4 seconds via a
+  small inline `<script>` — the first JavaScript anywhere in this app.
+- **Open backlog item, not built:** a reminder nudge for a parent sitting
+  on a pending request too long (mirroring Feature 4's planned milestone
+  reminders). Discussed and judged worth having, not overkill — not yet
+  scoped or built; revisit if there's time after Feature 4.
 
 ### 4. Long-term goal = Milestone Contract — the aspirational tier + bonus
 Big-ticket goals (MacBook, bike, CLAT/IIM Indore admission) are **not**
@@ -379,6 +442,104 @@ delay-calculator math here — this is accountability, not a cash pot. This
 is also the feature most likely to read as the "out-of-the-box" bonus to
 judges, since a parent-verified achievement contract isn't something a
 plain expense tracker would have.
+
+**Pending spec, reviewed 2026-11-03, deferred to Day 6 build:** Khwaish
+brought a "Kubera Coin & Goal System" dev spec this session — a virtual
+coin currency (separate from real ₹) that fills a Main Goal progress bar,
+fed by (a) Feature 2's weekly-streak and savings-milestone cards each
+paying out a fixed coin amount, and (b) parent-verified macro milestones
+(e.g. board-exam results) paying out a large one-time coin amount. This is
+real scope for Feature 4, not yet built — decided to stick to the planned
+Day 5/Day 6 order (Feature 3 next) rather than jump ahead, since we're
+ahead of schedule but Feature 3 is still next in line. Two numeric
+corrections this spec surfaced for already-built Feature 2 (debt
+threshold, milestone list) were pulled forward and applied immediately —
+see Feature 2 section above. Re-read the full spec with Khwaish before
+starting Day 6 — it wasn't saved verbatim anywhere else.
+
+**Built 2026-11-04 (Day 6), design locked and reviewed line-by-line with
+Khwaish before any code was written — same process as Features 2/3:**
+
+- **Two fully separate tracks, confirmed:** real ₹ cushion savings
+  (`kubera_streaks`) and virtual Kubera Coins (`kubera_coins`) never mix.
+  Deliberately tested with a concrete scenario — a cushion withdrawal must
+  never move the Main Goal progress bar, since an emergency withdrawal is
+  a normal, intentional use of the cushion (established back on Day 3-4),
+  not something that should also punish an unrelated goal.
+- **Main Goal Target: 3,00,000 Kubera Coins**, hardcoded for this build.
+  Khwaish's own insight during design: in a "real" version this should be
+  parent-editable (same pattern as the approval threshold), but for the
+  judge-facing demo a fixed, good-sounding number is simpler and there's
+  no second real user to disagree with it. Parent-editable goal target is
+  an explicit open item below, not built.
+- **10th board exam milestone: 1,50,000 coins** (fixed macro milestone).
+  **12th boards: explicitly out of scope**, dropped per Khwaish's call —
+  not deferred quietly, a real decision not to build it this round.
+- **"Other" bucket — flexible, parent-created custom milestones**, no
+  fixed total enforced. Demo-seeded with 3 examples on every new
+  `anon_id` (half-yearly/pre-board 90%+: 25,000 coins; sports/competition
+  win: 25,000 coins; consistent chores/reading goals: 28,000 coins) plus
+  the 10th-boards one — same "real mechanism, pre-seeded for the demo"
+  pattern as the wallet balance and streak day. A parent can add further
+  custom milestones live via a small form.
+- **Weekly streak card: 1,000 coins. Savings milestone card: 2,000
+  coins.** Both values matched the original spec, no change — hooked
+  directly into the *existing* Feature 2 trigger logic (`checkin()`'s
+  weekly-badge block, `award_milestones()`) via one new `award_coins()`
+  helper, rather than new trigger logic.
+- **Milestone claim→verify flow, a real judgment call Khwaish raised
+  unprompted mid-build:** the original design let a parent "Verify" a
+  milestone with zero input from the teen — she caught that this made
+  "verify" meaningless, since a parent could click it with no evidence
+  anything happened. Resolved into a three-state flow: `pending`
+  (parent-set, not yet claimed) → `claimed` (teen submits a mandatory
+  short text note, e.g. "scored 92% in pre-boards") → `verified` (parent
+  reviews the note and confirms; coins awarded on this transition). **No
+  reject/"send back" option built this round** — a parent can only
+  Verify a claim, not decline it; flagged as a real, deliberate scope
+  cut, not an oversight, open item below.
+- **Evidence type: text note only — photo, screenshot, and voice note
+  were explicitly considered and dropped.** Real reason, not just a
+  time-saver: a report-card screenshot or photo would very likely show
+  the teen's real name and school, directly conflicting with the
+  competition's hard "no real photos, no real personal info" rule — a
+  disqualification-shaped risk, not a style question. Voice notes were
+  separately cut for being a genuinely new category of engineering
+  (audio capture/storage/playback) not justified by the time left.
+  Khwaish pushed hard for all four evidence types before landing here —
+  see `reflections/understanding.md`'s 2026-11-04 entry for the full
+  back-and-forth, including a judgment-call answer that had to be
+  challenged twice before she gave her real reasoning (text is enough
+  specifically *because* stronger verification is ruled out by the
+  competition's rules, not because she didn't want it in principle).
+- **Toast notifications on both sides**, same mechanism as Feature 3's
+  Day 5 approval toast (`seen_by_teen`-style one-time flag + 4-second JS
+  `setTimeout`, now generalized into a small `toast_html()` helper since
+  it was about to be copy-pasted a third time): parent gets a one-time
+  toast when a teen claims a milestone (`kubera_milestones.
+  seen_by_parent`), teen gets a one-time toast when a parent verifies one
+  (`kubera_milestones.seen_by_teen`). Both flags live on the database
+  row, not the session cookie — deliberately, since the "already shown"
+  fact has to survive a cleared/reset browser session, same reasoning as
+  why `anon_id` itself has to be a cookie backed by a database row rather
+  than purely client-side state.
+- **New tables:** `kubera_coins` (`anon_id`, `current_coins`, `max_coins`
+  default 300000) and `kubera_milestones` (`id`, `anon_id`, `title`,
+  `coin_reward`, `status`, `note`, `created_at`, `verified_at`,
+  `seen_by_parent`, `seen_by_teen`) — kept separate from `kubera_streaks`
+  despite both being "one row per teen," since the deciding factor was
+  that each table maps to one distinct feature/concept (the real-money
+  habit mechanic vs. the virtual reward layer), not list-vs-single-value
+  like the Day 2 `kubera_wallets`/`kubera_expenses` split.
+
+**Open items, not built this round, flagged honestly rather than
+silently dropped:**
+- Main Goal target (3,00,000) is hardcoded, not parent-editable, unlike
+  the approval threshold.
+- No "send back"/reject path for a parent who doesn't buy a teen's claim
+  — verify-only for now.
+- Photo/screenshot/voice-note evidence — ruled out for this competition
+  specifically (real-photo risk, build cost), not a universal "never."
 
 ---
 
@@ -394,8 +555,8 @@ checkpoint before the final polish day.
 | 2 | 4 Nov | ~~Feature 1 — expense tracker (Q1)~~ **Done 2026-11-03, one day ahead of schedule.** |
 | 3 | 5 Nov | ~~Feature 2a — cushion/streak wallet core~~ **Done 2026-11-03, two days ahead of schedule.** |
 | 4 | 6 Nov | ~~Feature 2b — badge/card gamification + delay calculator~~ **Done 2026-11-03, same session — built bigger than originally scoped (Shields, Refill Mode state machine); see Feature 2 section above.** |
-| 5 | 7 Nov | Feature 3 — parent-approval request flow (Q3) |
-| 6 | 8 Nov | Feature 4 — long-term milestone contract + parent verification + reminders |
+| 5 | 7 Nov | ~~Feature 3 — parent-approval request flow (Q3)~~ **Done 2026-11-03, four days ahead of schedule.** |
+| 6 | 8 Nov | ~~Feature 4 — long-term milestone contract + parent verification + reminders~~ **Done 2026-11-04, four days ahead of schedule.** |
 | 7 | 9 Nov | **Checkpoint.** Test with a real kid. Fix what surfaces. Polish for the "10-second test" (25 pts) |
 | 8 | 10 Nov | Final polish, deploy, submit **before** 11:59 PM IST — don't wait for deadline night |
 
@@ -404,6 +565,18 @@ gets cut rather than submitting four half-working things — a broken
 feature scores worse on both "answers the questions" and "easy to use"
 than a missing one. This is a call to make honestly in the moment if it
 comes up, not a decision made in advance here.
+
+**Visual design, confirmed intentional 2026-11-03:** every page built so
+far (Days 1-5) is deliberately bare, unstyled HTML — no colors, no layout,
+no branding. This is not an oversight. Khwaish's explicit call: finish and
+verify all four features functionally first (plain text is enough to
+confirm the logic actually works), then do one focused visual design pass
+on Days 7-8 as already scheduled, rather than styling incrementally as
+each feature is built. Real risk worth flagging honestly if Day 7's
+real-kid testing surfaces functional bugs: that eats into the same 1.5
+days meant for a full visual pass across 5+ pages — if that happens, it's
+a live Rule 13 triage call in the moment, not something to silently
+absorb.
 
 **Schedule note, 2026-11-03:** Feature 2's gamification (above) grew
 considerably past its original Day 4 scope — full Shield system with

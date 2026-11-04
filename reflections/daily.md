@@ -13,3 +13,7 @@ Understood: The importance of cookies when login is not present — how they're 
 ## 2026-11-03 (continued)
 Did: Built the whole cushion, streak, badges, Shields, and Refill Mode system.
 Understood: Why the cushion balance must stay frozen while paying off Refill Mode debt — letting it grow at the same time would defeat the purpose of "refilling" what was spent and let players cheat their own financial progress.
+
+## 2026-11-03 (continued again — Feature 3 session)
+Did: Built the full parent-approval request feature (threshold branch, approve/decline, parent history view, teen status banner and toast), and reviewed the Kubera Coin & Goal System spec for Feature 4.
+Understood: That deposits having no upper limit (minimum ₹10 only) applies to both normal check-ins and Refill Mode repayments equally, letting a user pay off debt as fast as they want; that Kubera Coins are virtual in-app points — not real cash — used only to fill the progress bar toward a parent-approved Main Goal, running on a track completely separate from the real-money cushion; and how the card economy bridges the two tiers — weekly habit cards (1,000 coins) and ₹500 savings-milestone increments (2,000 coins) feed daily habits into the same pot that parent-set macro life goals (like board exam milestones) also feed into.
