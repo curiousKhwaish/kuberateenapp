@@ -17,3 +17,7 @@ Understood: Why the cushion balance must stay frozen while paying off Refill Mod
 ## 2026-11-03 (continued again — Feature 3 session)
 Did: Built the full parent-approval request feature (threshold branch, approve/decline, parent history view, teen status banner and toast), and reviewed the Kubera Coin & Goal System spec for Feature 4.
 Understood: That deposits having no upper limit (minimum ₹10 only) applies to both normal check-ins and Refill Mode repayments equally, letting a user pay off debt as fast as they want; that Kubera Coins are virtual in-app points — not real cash — used only to fill the progress bar toward a parent-approved Main Goal, running on a track completely separate from the real-money cushion; and how the card economy bridges the two tiers — weekly habit cards (1,000 coins) and ₹500 savings-milestone increments (2,000 coins) feed daily habits into the same pot that parent-set macro life goals (like board exam milestones) also feed into.
+
+## 2026-11-04 (Day 6 — Feature 4)
+Did: Tested claiming a milestone by typing "scored 92% in half-yearly exams, please check my report card" into the note text box, before a parent could verify it.
+Understood: The teen-submitted text note is the required bridge that lets the parent see exactly what was accomplished before they click verify.
