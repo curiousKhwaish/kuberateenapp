@@ -1915,6 +1915,101 @@ form select {
   gap: 10px;
 }
 
+/* Pay screen tabs — Scan QR / Number / UPI ID, all three purely mocked
+   client-side UI feeding the exact same /pay/<payee> confirm+pay flow
+   already built (no real payment gateway involved). */
+.pay-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.pay-tab {
+  flex: 1;
+  padding: 10px 6px;
+  border-radius: 999px;
+  border: none;
+  background: rgba(100, 116, 139, 0.12);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pay-tab.active {
+  background: linear-gradient(90deg, var(--blue), #0284C7);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(14, 165, 233, 0.35);
+}
+
+.pay-tab-panel {
+  display: none;
+}
+
+.pay-tab-panel.active {
+  display: block;
+}
+
+.qr-scan-frame {
+  position: relative;
+  width: 220px;
+  height: 220px;
+  margin: 10px auto;
+  border-radius: 24px;
+  background: #0f172a;
+  overflow: hidden;
+}
+
+.qr-scan-pattern {
+  position: absolute;
+  inset: 20px;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.18) 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.18) 0 6px, transparent 6px 12px);
+  opacity: 0.6;
+  border-radius: 8px;
+}
+
+.qr-corner {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border: 4px solid var(--blue-light);
+}
+
+.qr-corner-tl { top: 10px; left: 10px; border-right: none; border-bottom: none; border-radius: 8px 0 0 0; }
+.qr-corner-tr { top: 10px; right: 10px; border-left: none; border-bottom: none; border-radius: 0 8px 0 0; }
+.qr-corner-bl { bottom: 10px; left: 10px; border-right: none; border-top: none; border-radius: 0 0 0 8px; }
+.qr-corner-br { bottom: 10px; right: 10px; border-left: none; border-top: none; border-radius: 0 0 8px 0; }
+
+.qr-scan-line {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  background: var(--blue-light);
+  box-shadow: 0 0 8px var(--blue-light);
+  animation: qr-scan-sweep 2.2s ease-in-out infinite;
+}
+
+@keyframes qr-scan-sweep {
+  0%, 100% { top: 14px; }
+  50% { top: 206px; }
+}
+
+.qr-scan-hint {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 10px 0 0;
+}
+
+.pay-text-input {
+  width: 100%;
+  margin-top: 8px;
+  box-sizing: border-box;
+}
+
 .payee-row {
   display: flex;
   align-items: center;
