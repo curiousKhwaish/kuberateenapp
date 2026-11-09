@@ -142,6 +142,19 @@ separate devices. No pairing codes, no accounts, nothing to "sign in" to
 
 ## Deployment & URLs
 
+**Live, 2026-11-09: https://kuberateenfinance.vercel.app** — this is the
+actual judges' link. (`kuberateenapp` as a project/subdomain name was
+already taken in Vercel's shared `.vercel.app` namespace, unrelated to
+this account, so the project is named `kuberateenfinance` instead — same
+free-tier `.vercel.app` domain the plan below always called for, just a
+different exact name.) Deployed from this repo's `main` branch via
+Vercel's GitHub integration — a push to `main` auto-redeploys. Verified
+end to end directly against the live URL, not just the code: full route
+crash sweep, the live Day-13→14 check-in action, milestone claim→verify
+(trophy badge)→reject, Refill Wallet, the Pay tabs below, and the
+self-healing stale-cookie fix — all confirmed working on production, CSS
+confirmed byte-identical to local so what's live is genuinely current.
+
 **Decided 2026-11-03.** Two separate pages exist for two separate
 purposes — don't conflate them:
 
@@ -242,6 +255,37 @@ reading if this section ever needs revisiting) — superseding the original
   only, cash is a separate real-world pool the app was never holding, so
   logging a cash spend is pure record-keeping for the "where did it go"
   picture, not a balance-affecting transaction.
+- **Pay flow upgraded to a real FamPay/GPay-style picker, 2026-11-09 —
+  Razorpay considered and explicitly rejected.** Khwaish asked directly
+  whether Razorpay (test mode) could be wired in so Pay felt like a real
+  UPI app, referencing how FamPay actually works. Weighed and turned
+  down for two concrete reasons, not vagueness about the idea: (1) the
+  competition's own rules say "no real money anywhere" *and* separately
+  "no ads, no payment" — even sandboxed, a judge seeing an actual
+  third-party checkout (Razorpay's own branding/OTP/UPI test flow) could
+  reasonably read that as "this app processes payments," the same
+  disqualification-shaped risk that already ruled out photo evidence for
+  milestones; (2) real third-party SDK integration the night before
+  submission is exactly the kind of new-code risk this project's own
+  built-in cut line exists to avoid. **Built instead: the same FamPay
+  *feel* as pure mocked UI**, no gateway involved at all. `/pay` is now
+  three tabs — Scan QR (a fake camera viewfinder: CSS corner brackets, a
+  dotted scan pattern, an animated sweep line, purely decorative), Pay to
+  Mobile Number, and Pay via UPI ID — with the original preset-contact
+  list moved under the QR tab as "Or pick a contact" rather than
+  removed. All three still funnel into the one `/pay/<payee>`
+  confirm-and-pay route that already existed, completely unchanged.
+  **Category auto-detection generalized**: `guess_category()` replaces
+  the old exact-match `PAYEE_CATEGORY.get()` with a letters-only
+  substring match, so a typed UPI ID like `sriramvadewala@okaxis` still
+  gets "Snacks" auto-detected correctly, same as tapping the preset
+  contact would — a bare phone number has no name to match against, so
+  it correctly falls through to the existing manual category dropdown,
+  same fallback every unrecognized payee already had. Verified end to
+  end on both local and the live Vercel deployment: tab rendering, the
+  fuzzy match on a UPI-style ID, the no-match fallback on a phone
+  number, and a real payment going through with the wallet correctly
+  deducted — plus a full route regression sweep, both before and after.
 - **Amount shown as raw ₹ at the moment of logging** — not a per-entry
   "25 samosas" conversion (killed because not everyone eats samosas and
   samosa prices vary, so the conversion is a tax on the reader, not a
