@@ -21,3 +21,7 @@ Understood: That deposits having no upper limit (minimum ₹10 only) applies to 
 ## 2026-11-04 (Day 6 — Feature 4)
 Did: Tested claiming a milestone by typing "scored 92% in half-yearly exams, please check my report card" into the note text box, before a parent could verify it.
 Understood: The teen-submitted text note is the required bridge that lets the parent see exactly what was accomplished before they click verify.
+
+## 2026-11-07 (Day 7-8 — visual/UX polish pass)
+Did: Today's work was designing — visuals and the overall experience, making the app's main screens (Stories, Pay flow, badge cards, parent view) feel polished and judge-ready.
+Understood: That design in the preview is such an important task — it creates a real impression on the person looking at it, and first impression is the last impression, so today's visual work matters directly for how the judges will react.

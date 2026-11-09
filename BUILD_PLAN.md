@@ -218,6 +218,23 @@ reading if this section ever needs revisiting) — superseding the original
   fact — manually, or caught by a nightly nudge ("did you spend anything
   today? how much, what for?"). Manual logging is NOT the primary demo
   path; paying from the wallet already *is* the log, in one tap.
+  **The nudge half built 2026-11-07** — not literally nightly (no
+  background scheduler exists or was worth building this close to
+  deadline), but a bold, slide-down banner with a 5-second countdown that
+  fires once, on the teen's second home-page load in a browser session,
+  linking straight to Log Cash Expense. Session-cookie-gated, no new
+  database column needed.
+- **Pay flow visual gap, found and fixed 2026-11-07:** the "mocked
+  GPay-style payment picker" called for above was functionally built on
+  Day 2 but never actually got the visual pass — `/pay` and `/pay/<payee>`
+  were still bare HTML while every other screen in the app had a real
+  design pass. Found during an honest self-audit against the competition's
+  own scoring rubric, flagged as the single most disproportionately
+  visible weak point (it's the app's primary action). Rebuilt both screens
+  reusing the existing glossy/holographic recipe (same gradient + sheen
+  already used for the spending bubbles and Kubera Stories), colored per
+  payee by its already-existing category lookup — no change to the
+  underlying payment logic, purely visual.
   **Built 2026-11-03:** a manually-logged cash expense is written to
   `kubera_expenses` with `payee = null` (displayed as "(cash)" wherever
   shown) but deliberately does **not** subtract from `kubera_wallets.
@@ -256,11 +273,30 @@ reading if this section ever needs revisiting) — superseding the original
 
 ### 2. Short-term goal = Cushion/Streak Wallet — answers Q2 (short-term tier)
 **Clarified 2026-11-02: this cushion/streak pot is a separate balance from
-Feature 1's main pocket-money wallet** — the daily ₹10 streak-save builds
-*this* pot specifically; everyday tuck-shop/auto/shopping spends come out
-of the main wallet and don't touch it. Keeping them separate was a
-deliberate call — mixing them would mean an ordinary samosa purchase eats
-into the emergency cushion too, defeating the point of having one.
+Feature 1's main pocket-money wallet** — everyday tuck-shop/auto/shopping
+spends (Pay) come out of the main wallet and never touch the cushion.
+Keeping them separate was a deliberate call — mixing them would mean an
+ordinary samosa purchase eats into the emergency cushion too, defeating
+the point of having one.
+
+**Corrected 2026-11-09, Khwaish's own catch: the daily streak-save deposit
+now actually comes out of the main Wallet too, same as real saving.**
+Originally, Check-In only ever added to `cushion_balance` — it never
+touched `kubera_wallets.balance`, so the Cushion grew "for free" every
+day with no money ever leaving the Wallet to fund it. Khwaish asked
+directly whether a Save should cut from the Wallet, and reasoned through
+why it should: in real life, saving ₹10 means ₹10 you chose not to
+spend, not money that appears from nowhere. The free-growth version
+wasn't simulating the *discipline* of saving, just accumulating a bonus
+— a gap a sharp judge evaluating "money smarts" specifically could have
+caught. Fixed in `checkin()`: whatever amount is deposited (whether it
+grows the cushion directly, or pays down Refill Mode debt) is now also
+subtracted from `kubera_wallets.balance`, with a new guard blocking a
+deposit larger than the current wallet balance ("You only have ₹X in
+your wallet — you can't save more than that today"). Verified against
+the real running app across all three paths — a normal save, a Refill
+Mode debt repayment, and the new insufficient-balance block — confirming
+the Wallet number actually drops by the right amount in each case.
 
 **This is the merged feature** — originally planned as two separate things
 (a "Goal Delay Calculator" and a "Peer-Pressure Emergency Cushion vault").
@@ -374,17 +410,100 @@ not a separate fund.
   streak build. The live demo link opens with a **pre-seeded streak
   already in progress** so the full loop — check-in, badges, cushion
   spend, delay calc — is visible within the "10-second test."
-  **Ideal starting point, locked 2026-11-03:** wallet balance ₹3,000,
-  streak Day 6, cushion ₹90. Deliberate numbers, not arbitrary — a judge
-  doing the **minimum ₹10 check-in** pushes cushion from ₹90 to exactly
-  ₹100 *and* streak from Day 6 to Day 7, so **one single check-in fires
-  both a milestone card (₹100 crossing) and a weekly card (Day 7) at
-  once** — the richest possible first impression from the smallest
-  possible judge action. **Kubera Coins are deliberately not part of
-  this seed** — reviewed 2026-11-03 (see Feature 4 note above), decided
-  to demo the weekly/milestone cards as already built and explain
-  coins/Main Goal as coming in a later build session, rather than pull
-  Feature 4 forward ahead of Feature 3.
+  ~~**Original starting point, locked 2026-11-03:** wallet balance
+  ₹3,000, streak Day 6, cushion ₹90 — a judge's minimum ₹10 check-in
+  pushed cushion ₹90→₹100 and streak Day 6→Day 7 at once, firing both a
+  milestone card and a weekly card from one action. Kubera Coins were
+  deliberately left out of this seed.~~
+  **Replaced 2026-11-09, Khwaish's call — a deeper seed, now that
+  Features 2 and 4 are both fully built and coins are part of the real
+  demo story.** New judge lands **mid-streak on Day 13** instead of
+  Day 6, with history already behind them: wallet ₹2,870 (₹3,000 minus
+  the ₹130 saved over 13 days), cushion ₹130, 1 Shield already held,
+  `last_checkin` set to yesterday so today's check-in is live and
+  waiting. Two badges are seeded as already earned and already
+  watched — `weekly_7` (the Day-7 streak badge, dated 13 days back: today
+  minus 7) and `milestone_100` (the ₹100 cushion crossing, dated today
+  minus 4) — with Kubera Coins seeded to match (1,000 + 2,000 = 3,000),
+  so the Main Goal bar isn't visibly out of sync with the badges sitting
+  right next to it. The **live, on-stage moment** is the judge's own
+  minimum ₹10 check-in: streak 13→14 fires a brand-new `weekly_14`
+  badge, a second Shield (now at the 2-shield cap), +1,000 Kubera Coins,
+  and cushion ₹130→₹140 — one action, four things happening at once,
+  same "richest possible first impression" principle as the original
+  seed, just moved one tier deeper now that there's more mechanic to
+  show off. Implemented in `ensure_anon_session()` in `app.py` — the
+  seed inserts now pass explicit values instead of relying on each
+  table's bare Postgres column defaults, so the whole scenario is
+  readable in one place in code rather than hidden in the database
+  schema. Dates are computed relative to `today_utc()`, not hardcoded,
+  so the seed stays internally consistent (Day 7 badge 6 days before
+  Day 13, Day 10 milestone 9 days before Day 13, both before `last_checkin`)
+  no matter what day the app is actually opened on. Verified against a
+  real fresh session end to end — seed values confirmed exactly as
+  specified, then a real ₹10 check-in confirmed streak 13→14, wallet
+  2870→2860, cushion 130→140, coins 3000→4000, a new `weekly_14` badge,
+  and shields 1→2, all in one response — test accounts deleted after.
+  **Only affects brand-new sessions going forward** — existing test
+  accounts (including Khwaish's own) keep whatever state they're
+  already in; this seed is what a judge opening the link fresh from now
+  on will see.
+  ~~This v1 seed held for about an hour.~~
+  **Replaced again, same day, v2 — matched exactly to Khwaish's own
+  reference incognito account rather than described from scratch.**
+  She built up a richer real scenario by hand (claimed/verified real
+  milestones, real Pay transactions, the works), decided it was the one
+  she wanted every judge to land on, and had it read directly out of the
+  database rather than re-typed — the permanent seed is now the literal
+  state of that account, not a paraphrase of it. On top of v1's Day-13
+  streak/badges/Shield: **wallet ₹1,770** (₹2,870 minus 3 real Pay
+  transactions — Bombay Stationery ₹30, Ola Cabs ₹60, Sriram Vadewala
+  ₹1,010; a ₹40 cash expense is seeded too but doesn't touch the wallet,
+  same as always), so Track & Pay shows real spend history on first
+  load, not an empty list. **Kubera Coins is now 153,000** (the earlier
+  3,000 plus 150,000 from a **pre-verified 10th-boards milestone**,
+  parent-verified yesterday with note "Scored 92.4% --- marksheet") —
+  Main Goal opens already at 51%. A second milestone (sports tournament)
+  is seeded **`claimed`**, sitting in the parent's "Ready to verify"
+  with a real note, so there's always one live action waiting the first
+  time a judge opens the parent view, not a blank state. **One addition
+  beyond a literal copy of the reference account, flagged honestly:** a
+  `trophy_150000` badge was seeded for the already-verified milestone,
+  which the reference account itself doesn't have (it predates the
+  trophy-badge-on-verify feature built earlier in this same session) —
+  included so "My Badges" doesn't contradict the new Kubera Story tab
+  that explicitly promises a trophy badge on verification. **Real bug
+  caught and fixed while building this:** PostgREST's bulk insert
+  derives a batch's columns from the *first* row in the array — any
+  later row missing one of those keys gets `NULL` written explicitly
+  instead of falling back to the table's column default. The first
+  pass 500'd (`not-null constraint` on `kubera_milestones.status`)
+  because two of the four seeded milestone rows didn't repeat the
+  `status`/`note`/`verified_at`/`seen_by_parent`/`seen_by_teen` keys the
+  other two had. Fixed by giving all four rows in the batch the exact
+  same key set. Worth remembering for any future bulk insert in this
+  codebase, not just this one. Verified end to end again after the fix
+  — fresh seed matches spec exactly, and the live Day-13→14 check-in
+  still fires correctly on top of it (streak 14, wallet 1,760, coins
+  154,000, a new `weekly_14` badge, 2 Shields).
+  **Database also swept clean the same session:** 154 other test
+  sessions accumulated across the whole 8-day build (back to
+  2026-11-02) were permanently deleted from every `kubera_*` table,
+  Khwaish's explicit call after being shown the real count first — only
+  the reference incognito account (the one this seed is now copied
+  from) survived. This included her own original daily-driver test
+  account from earlier in the project; that history now only exists in
+  `reflections/decisions.md` and `reflections/understanding.md`, not in
+  the live database.
+- **Instagram-style Stories, added 2026-11-07 (Day 7-8 polish):** a story
+  row at the top of the teen view, above Goal Pot. First avatar is always
+  "Kubera" — a 5-tab onboarding story (app purpose, how streaks work, how
+  Shields work, using the real day-7/14/21 and 5-day-cooldown/30-day-expiry
+  numbers, not a simplified version). One avatar per earned badge follows,
+  in earned order, each opening as a single-slide replay of that badge.
+  Colored ring = unwatched, gray = watched — tracked with two new columns
+  (`kubera_badges.seen_by_teen`, `kubera_sessions.seen_kubera_intro`), same
+  seen/unseen pattern already used for toasts elsewhere in the app.
 
 ### 3. Parent-approval request — answers Q3 ("Can I buy this, Mum?")
 Purchase above a parent-set threshold (per the ICP, ~₹500–1,000) triggers
@@ -430,6 +549,20 @@ approval friction" point).
   on a pending request too long (mirroring Feature 4's planned milestone
   reminders). Discussed and judged worth having, not overkill — not yet
   scoped or built; revisit if there's time after Feature 4.
+- **Parent view collapsed into one scrolling page, 2026-11-07** — same
+  information-architecture move already made for the teen view on
+  2026-11-05 (tabs/separate pages → one continuous scroll), applied here
+  for consistency. Order, a real judgment call since there's no single
+  right answer: **Overview** (Main Goal card, wallet balance, badges)
+  first, then **Requests** (pending approve/decline, approved, declined —
+  absorbed from the old `/parent/requests` page), then **Milestones**
+  (waiting on teen, ready to verify, verified, add-new-milestone form —
+  absorbed from the old `/parent/milestones` page). `/parent/requests`
+  (GET) and `/parent/milestones` (GET) were deleted outright; the POST
+  action routes (`/parent/requests/<id>/approve|decline`,
+  `/parent/milestones` add-form, `/parent/milestones/<id>/verify`) stay as
+  real endpoints, redirecting/linking back to `/#requests-section` or
+  `/#milestones-section` instead of the old page URLs.
 
 ### 4. Long-term goal = Milestone Contract — the aspirational tier + bonus
 Big-ticket goals (MacBook, bike, CLAT/IIM Indore admission) are **not**
@@ -494,10 +627,25 @@ Khwaish before any code was written — same process as Features 2/3:**
   anything happened. Resolved into a three-state flow: `pending`
   (parent-set, not yet claimed) → `claimed` (teen submits a mandatory
   short text note, e.g. "scored 92% in pre-boards") → `verified` (parent
-  reviews the note and confirms; coins awarded on this transition). **No
-  reject/"send back" option built this round** — a parent can only
-  Verify a claim, not decline it; flagged as a real, deliberate scope
-  cut, not an oversight, open item below.
+  reviews the note and confirms; coins awarded on this transition).
+  **Reject path added 2026-11-09**, closing what had been a deliberate
+  Day 6 scope cut (see Open Items, was: "no reject/send back option") —
+  surfaced as a real gap during this session's strict-judge re-pass
+  against the competition rubric, then built the same session. A new
+  `/parent/milestones/<id>/reject` route (POST, same existence/status
+  guards as `verify_milestone`) flips `status` straight back to
+  `pending` — no new column, no separate "rejected" state — so the
+  milestone simply reappears in the teen's "Milestones to be Covered"
+  and the parent's "Waiting on your teen" sections, ready to be
+  reclaimed with a fresh note (the claim route already overwrites
+  `note` unconditionally, so nothing stale lingers). A "Reject" button
+  sits next to "Verify" on the parent's claimed-milestone card, reusing
+  the existing `.btn-small-decline` style already built for Feature 3's
+  approval-request decline — same visual language, no new CSS.
+  Verified end-to-end against the real running app, not just read: a
+  milestone was created, claimed with a note, rejected, and confirmed
+  back in both the teen's and parent's correct sections before the test
+  row was deleted.
 - **Evidence type: text note only — photo, screenshot, and voice note
   were explicitly considered and dropped.** Real reason, not just a
   time-saver: a report-card screenshot or photo would very likely show
@@ -534,10 +682,19 @@ Khwaish before any code was written — same process as Features 2/3:**
 
 **Open items, not built this round, flagged honestly rather than
 silently dropped:**
-- Main Goal target (3,00,000) is hardcoded, not parent-editable, unlike
-  the approval threshold.
-- No "send back"/reject path for a parent who doesn't buy a teen's claim
-  — verify-only for now.
+- Main Goal **target** (3,00,000 coins) is still hardcoded, not
+  parent-editable, unlike the approval threshold — unchanged. What *did*
+  change 2026-11-09: the goal's **name** (e.g. "Yamaha R15 Bike") is now
+  editable from either view, not teen-only — Khwaish's reasoning: a
+  parent might disagree with the teen's chosen goal and the two need to
+  actually negotiate it together, so gating "Edit" to teen-only didn't
+  match how the feature is meant to be used. One-line fix: the
+  `edit_link` on the home page's Main Goal card no longer checks
+  `view_mode`; `/goal/edit` itself never had a mode restriction, so no
+  route change was needed.
+- ~~No "send back"/reject path for a parent who doesn't buy a teen's
+  claim — verify-only for now.~~ **Built 2026-11-09** — see Feature 4
+  section above.
 - Photo/screenshot/voice-note evidence — ruled out for this competition
   specifically (real-photo risk, build cost), not a universal "never."
 
@@ -557,8 +714,8 @@ checkpoint before the final polish day.
 | 4 | 6 Nov | ~~Feature 2b — badge/card gamification + delay calculator~~ **Done 2026-11-03, same session — built bigger than originally scoped (Shields, Refill Mode state machine); see Feature 2 section above.** |
 | 5 | 7 Nov | ~~Feature 3 — parent-approval request flow (Q3)~~ **Done 2026-11-03, four days ahead of schedule.** |
 | 6 | 8 Nov | ~~Feature 4 — long-term milestone contract + parent verification + reminders~~ **Done 2026-11-04, four days ahead of schedule.** |
-| 7 | 9 Nov | **Checkpoint.** Test with a real kid. Fix what surfaces. Polish for the "10-second test" (25 pts) |
-| 8 | 10 Nov | Final polish, deploy, submit **before** 11:59 PM IST — don't wait for deadline night |
+| 7 | 9 Nov | ~~Checkpoint: real-kid test, then polish~~ **Reordered 2026-11-04 — see note below.** Visual design pass first (`research/design-spec.md`), real-kid test happens on the *designed* app, not the bare one. |
+| 8 | 10 Nov | Fix what the real-kid test surfaces, deploy, submit **before** 11:59 PM IST — don't wait for deadline night |
 
 **Built-in cut line:** if Features 1–3 aren't solid by Day 5, Feature 4
 gets cut rather than submitting four half-working things — a broken
@@ -570,13 +727,27 @@ comes up, not a decision made in advance here.
 far (Days 1-5) is deliberately bare, unstyled HTML — no colors, no layout,
 no branding. This is not an oversight. Khwaish's explicit call: finish and
 verify all four features functionally first (plain text is enough to
-confirm the logic actually works), then do one focused visual design pass
-on Days 7-8 as already scheduled, rather than styling incrementally as
-each feature is built. Real risk worth flagging honestly if Day 7's
-real-kid testing surfaces functional bugs: that eats into the same 1.5
-days meant for a full visual pass across 5+ pages — if that happens, it's
-a live Rule 13 triage call in the moment, not something to silently
-absorb.
+confirm the logic actually works), then do one focused visual design pass,
+rather than styling incrementally as each feature is built.
+
+**Day 7 re-sequenced 2026-11-04 — design now comes *before* the real-kid
+test, not after.** Original plan (above, now struck through) was test the
+bare app first, then polish. Khwaish's call, reasoned through live: the
+"10-second test" (25 pts) is a *visual* comprehension test — can a new kid
+get what to do just from looking at the screen, no explanation on a call.
+Testing a plain unstyled page can't actually measure that; it only tests
+whether the underlying logic works, which is already verified. Her
+reasoning also surfaced that "design" here isn't just color/styling — it's
+deciding information architecture (what screen/section a user sees first,
+what comes next) so the screen itself teaches without her narrating it.
+Accepted as sound, not corrected. Risk is real and named plainly: this
+uses up the slack that made the original test-then-polish order safe. The
+mitigating fact that made this an acceptable trade: the team is 4 days
+ahead of schedule — today (2026-11-04) is doing Day 7's content on the
+calendar date originally assigned to Day 3, so even if the real-kid test
+(now happening *after* design, closer to Day 8) surfaces issues, there are
+several real days of slack before the 10 Nov, 11:59 PM IST deadline, not
+the thin one-day margin the original schedule assumed.
 
 **Schedule note, 2026-11-03:** Feature 2's gamification (above) grew
 considerably past its original Day 4 scope — full Shield system with

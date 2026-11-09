@@ -1,3 +1,5 @@
+import json
+import math
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -12,6 +14,144 @@ app.secret_key = "replace-this-with-a-real-random-secret-later"
 
 supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
+@app.before_request
+def ensure_anon_session():
+    # Runs before every route, not just home() — a visitor landing directly
+    # on any other page (a bookmarked/shared link, or just not "/") used to
+    # crash with KeyError: 'anon_id', since only home() ever created one.
+    if request.endpoint == "static":
+        return
+    anon_id = session.get("anon_id")
+    needs_seed = False
+    if anon_id is None:
+        anon_id = str(uuid.uuid4())
+        session["anon_id"] = anon_id
+        needs_seed = True
+    else:
+        # The browser's cookie can outlive the account it points to (e.g.
+        # after a database cleanup like 2026-11-09's) — self-heal by
+        # reseeding under the same anon_id instead of crashing with a
+        # Postgres "0 rows" error on the first query that assumes the row
+        # exists. Same reasoning as the original anon_id-missing fix, one
+        # layer deeper: a session can be present but no longer real.
+        existing = supabase.table("kubera_sessions").select("anon_id").eq("anon_id", anon_id).execute().data
+        needs_seed = not existing
+    if needs_seed:
+        supabase.table("kubera_sessions").insert({"anon_id": anon_id}).execute()
+        seed_demo_account(anon_id)
+    if "view_mode" not in session:
+        session["view_mode"] = "teen"
+
+def seed_demo_account(new_id):
+        # Demo seed, locked 2026-11-09 (v2, replacing the simpler Day-13
+        # version from earlier the same day) — a fresh judge lands mid-
+        # streak with real history already behind them, matched exactly
+        # to Khwaish's own reference incognito account so the permanent
+        # seed is the literal scenario she reviewed and approved, not a
+        # re-description of it. Narrative: a clean, no-missed-days streak
+        # that started 13 days ago. Day 7 (today-7) earned the weekly
+        # badge + a Shield; Day 10 (today-4) crossed the ₹100 cushion
+        # milestone. Yesterday, the parent verified the big 10th-boards
+        # milestone (150,000 coins) and the teen claimed a second one
+        # (sports tournament, still awaiting verification) — so a judge
+        # opening the parent view immediately sees one real "ready to
+        # verify" action waiting, not an empty list. last_checkin is
+        # yesterday, so the minimum ₹10 check-in today is still the live,
+        # on-stage moment — streak 13→14, a brand-new weekly badge, a
+        # second Shield, and 1,000 more Kubera Coins.
+        today = today_utc()
+        day1 = today - timedelta(days=13)
+        day7_date = (day1 + timedelta(days=6)).isoformat()
+        day10_date = (day1 + timedelta(days=9)).isoformat()
+        yesterday = (today - timedelta(days=1)).isoformat()
+        yesterday_dt = datetime.combine(today - timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc).isoformat()
+
+        saved_so_far = 130  # 13 days x ₹10/day
+
+        # Real spend history so a judge sees "where did my money go" already
+        # populated, not a blank slate — same 4 transactions reviewed live.
+        seed_expenses = [
+            {"anon_id": new_id, "amount": 30, "payee": "Bombay Stationery", "category": "shopping"},
+            {"anon_id": new_id, "amount": 60, "payee": "Ola Cabs", "category": "transport"},
+            {"anon_id": new_id, "amount": 40, "payee": None, "category": "snacks"},  # cash expense — doesn't touch wallet
+            {"anon_id": new_id, "amount": 1010, "payee": "Sriram Vadewala", "category": "snacks"},
+        ]
+        wallet_pay_deductions = sum(e["amount"] for e in seed_expenses if e["payee"] is not None)
+        starting_wallet = (3000 - saved_so_far) - wallet_pay_deductions  # = 1,770
+
+        # 1,000 (weekly_7) + 2,000 (milestone_100) + 150,000 (verified
+        # 10th-boards macro milestone) — already earned before the judge
+        # does anything.
+        starting_coins = 1000 + 2000 + 150000
+
+        supabase.table("kubera_wallets").insert({"anon_id": new_id, "balance": starting_wallet}).execute()
+        supabase.table("kubera_streaks").insert({
+            "anon_id": new_id,
+            "streak_count": 13,
+            "cushion_balance": saved_so_far,
+            "debt_remaining": 0,
+            "last_checkin": yesterday,
+        }).execute()
+        supabase.table("kubera_coins").insert({"anon_id": new_id, "current_coins": starting_coins}).execute()
+        supabase.table("kubera_badges").insert([
+            {"anon_id": new_id, "badge_type": "weekly_7", "earned_date": day7_date, "seen_by_teen": True},
+            {"anon_id": new_id, "badge_type": "milestone_100", "earned_date": day10_date, "seen_by_teen": True},
+            # Trophy badge for the already-verified 10th-boards milestone —
+            # keeps "My Badges" consistent with the Kubera Story's own
+            # "verify a milestone, get a trophy badge" promise.
+            {"anon_id": new_id, "badge_type": "trophy_150000", "earned_date": yesterday, "seen_by_teen": True},
+        ]).execute()
+        supabase.table("kubera_shields").insert({"anon_id": new_id, "earned_date": day7_date}).execute()
+        supabase.table("kubera_expenses").insert(seed_expenses).execute()
+        # NOTE: every dict in this bulk insert carries the exact same keys
+        # on purpose — PostgREST's bulk insert derives the batch's columns
+        # from the first row, so any row missing a key gets NULL written
+        # explicitly instead of falling back to the column's DB default
+        # (bit us once already: the two "pending" rows 500'd on a missing
+        # not-null "status" until this was made uniform).
+        supabase.table("kubera_milestones").insert([
+            {
+                "anon_id": new_id,
+                "title": "Score 90%+ in 10th board exams",
+                "coin_reward": 150000,
+                "status": "verified",
+                "note": "Scored 92.4% --- marksheet",
+                "verified_at": yesterday_dt,
+                "seen_by_parent": True,
+                "seen_by_teen": True,
+            },
+            {
+                "anon_id": new_id,
+                "title": "Win a sports tournament or school competition",
+                "coin_reward": 25000,
+                "status": "claimed",
+                "note": "certificate and gold medalll",
+                "verified_at": None,
+                "seen_by_parent": True,
+                "seen_by_teen": False,
+            },
+            {
+                "anon_id": new_id,
+                "title": "Score 90%+ in half-yearly / pre-board exams",
+                "coin_reward": 25000,
+                "status": "pending",
+                "note": None,
+                "verified_at": None,
+                "seen_by_parent": False,
+                "seen_by_teen": False,
+            },
+            {
+                "anon_id": new_id,
+                "title": "Consistent chores or extra reading goals this month",
+                "coin_reward": 28000,
+                "status": "pending",
+                "note": None,
+                "verified_at": None,
+                "seen_by_parent": False,
+                "seen_by_teen": False,
+            },
+        ]).execute()
+
 PAYEE_CATEGORY = {
     "Bombay Stationery": "shopping",
     "Sriram Vadewala": "snacks",
@@ -20,12 +160,520 @@ PAYEE_CATEGORY = {
 PAYEES = ["Bombay Stationery", "Sriram Vadewala", "Ola Cabs", "Campus Café", "Timely Treasures"]
 CATEGORIES = ["snacks", "movies", "transport", "bills", "gifts", "shopping", "grocery"]
 
-DEMO_MILESTONES = [
-    ("Score 90%+ in 10th board exams", 150000),
-    ("Score 90%+ in half-yearly / pre-board exams", 25000),
-    ("Win a sports tournament or school competition", 25000),
-    ("Consistent chores or extra reading goals this month", 28000),
+CATEGORY_ICONS = {
+    "snacks": "🫔",
+    "movies": "🎟️",
+    "transport": "🛺",
+    "bills": "🧾",
+    "gifts": "🎁",
+    "shopping": "🛍️",
+    "grocery": "🛒",
+}
+
+def payee_avatar_html(payee, size=56):
+    category = PAYEE_CATEGORY.get(payee)
+    icon = CATEGORY_ICONS.get(category, "💳")
+    if category:
+        highlight, dark, glow = CATEGORY_GLOSS[category]
+        base = CATEGORY_COLORS[category]
+    else:
+        highlight, dark, glow, base = "#E5E7EB", "#4B5563", "100, 116, 139", "#94A3B8"
+    icon_size = round(size * 0.46)
+    return f"""
+    <div class="payee-avatar" style="width:{size}px;height:{size}px;
+        background:radial-gradient(circle at 32% 26%, {highlight}, {base} 55%, {dark} 100%);
+        box-shadow:0 6px 16px rgba({glow}, 0.5), inset 0 -6px 10px rgba(0,0,0,0.25), inset 0 5px 8px rgba(255,255,255,0.5);">
+        <span class="sheen"></span>
+        <span class="payee-avatar-icon" style="font-size:{icon_size}px">{icon}</span>
+    </div>
+    """
+
+def glossy_icon_html(emoji, accent="blue", size=76):
+    icon_size = round(size * 0.46)
+    return f"""
+    <div class="payee-avatar glossy-{accent}" style="width:{size}px;height:{size}px;margin:0 auto 14px;">
+        <span class="sheen"></span>
+        <span class="payee-avatar-icon" style="font-size:{icon_size}px">{emoji}</span>
+    </div>
+    """
+
+def cat_icon(category):
+    icon = CATEGORY_ICONS.get(category, "💸")
+    return f'<span class="cat-icon animate-in">{icon}</span>'
+
+# Fixed category -> hue assignment (never cycled — a category keeps its color
+# identity whether it's one of 2 slices or all 7). Validated for colorblind
+# separation on both the linear order AND the pie-specific wraparound pair
+# (last slice touching first), which a bar/stack chart never has to check.
+CATEGORY_COLORS = {
+    "snacks": "#2a78d6",
+    "movies": "#eb6834",
+    "transport": "#1baf7a",
+    "bills": "#eda100",
+    "gifts": "#e87ba4",
+    "shopping": "#008300",
+    "grocery": "#4a3aa7",
+}
+
+# Glossy variants (highlight, dark edge, glow rgb) for each category's base
+# hue in CATEGORY_COLORS — same "bright highlight -> saturated mid -> deep
+# edge" recipe as the app-wide .glossy-* atoms, just one per spending category.
+CATEGORY_GLOSS = {
+    "snacks":    ("#BFE0FC", "#123F73", "42, 120, 214"),
+    "movies":    ("#FFD1B8", "#8A3A15", "235, 104, 52"),
+    "transport": ("#B8F5E0", "#0C6B48", "27, 175, 122"),
+    "bills":     ("#FFE4A8", "#8A5D00", "237, 161, 0"),
+    "gifts":     ("#FFD9E8", "#8A3D59", "232, 123, 164"),
+    "shopping":  ("#B8F0B8", "#004D00", "0, 131, 0"),
+    "grocery":   ("#D6CCF2", "#2A1F63", "74, 58, 167"),
+}
+
+def _pack_bubbles(items):
+    """Greedy spiral packing: place the biggest circle at the center, then
+    walk each smaller one outward along a spiral until it clears every
+    circle already placed. Good enough for the handful of categories this
+    app ever has (<=7), not meant as a general-purpose packer."""
+    placed = []
+    for i, (key, r) in enumerate(items):
+        if i == 0:
+            placed.append((key, 0.0, 0.0, r))
+            continue
+        angle, radius = 0.0, r
+        while True:
+            x, y = radius * math.cos(angle), radius * math.sin(angle)
+            if all(math.hypot(x - px, y - py) >= (r + pr + 3) for _, px, py, pr in placed):
+                break
+            angle += 0.28
+            radius += 0.9
+        placed.append((key, x, y, r))
+    return placed
+
+def category_bubbles_html(totals):
+    if not totals:
+        return '<p style="text-align:center;color:var(--text-muted)">No spending logged yet.</p>'
+
+    total = sum(totals.values())
+    ordered = sorted((c for c in CATEGORIES if c in totals), key=lambda c: totals[c], reverse=True)
+    max_amt = max(totals[c] for c in ordered)
+
+    def radius_for(amt):
+        return max(24.0, min(58.0, 58.0 * math.sqrt(amt / max_amt)))
+
+    placed = _pack_bubbles([(c, radius_for(totals[c])) for c in ordered])
+
+    min_x = min(x - r for _, x, y, r in placed)
+    max_x = max(x + r for _, x, y, r in placed)
+    min_y = min(y - r for _, x, y, r in placed)
+    max_y = max(y + r for _, x, y, r in placed)
+    cluster_cx, cluster_cy = (min_x + max_x) / 2, (min_y + max_y) / 2
+    field_w = max(260.0, max_x - min_x + 24)
+    field_h = max(170.0, max_y - min_y + 24)
+
+    bubbles = []
+    legend_rows = []
+    for i, (cat, x, y, r) in enumerate(placed):
+        amt = totals[cat]
+        pct = amt / total * 100
+        base = CATEGORY_COLORS.get(cat, "#898781")
+        highlight, dark, glow = CATEGORY_GLOSS.get(cat, ("#FFFFFF", "#333333", "100, 100, 100"))
+        icon = CATEGORY_ICONS.get(cat, "💸")
+        left = field_w / 2 + (x - cluster_cx) - r
+        top = field_h / 2 + (y - cluster_cy) - r
+        size_cls = " small" if r < 32 else ""
+
+        bubbles.append(f"""
+        <div class="bubble{size_cls} animate-in" style="width:{r*2:.0f}px;height:{r*2:.0f}px;left:{left:.0f}px;top:{top:.0f}px;
+            background:radial-gradient(circle at 32% 26%, {highlight}, {base} 55%, {dark} 100%);
+            box-shadow:0 6px 16px rgba({glow}, 0.5), inset 0 -8px 14px rgba(0,0,0,0.25), inset 0 6px 10px rgba(255,255,255,0.5);">
+            <span class="sheen" style="animation-delay:{(i % 5) * 0.6}s"></span>
+            <span class="spark" style="top:20%;left:65%;animation-delay:{(i % 4) * 0.4}s">✦</span>
+            <span class="bicon">{icon}</span>
+            <span class="bname">{cat.title()}</span>
+            <span class="bamt">₹{amt}</span>
+        </div>
+        """)
+        legend_rows.append(f"""
+        <div class="pie-legend-row">
+            <span class="pie-swatch" style="background:{base}"></span>
+            <span class="pie-legend-icon">{icon}</span>
+            <span class="pie-legend-label">{cat.title()}</span>
+            <span class="pie-legend-value">₹{amt} · {pct:.0f}%</span>
+        </div>
+        """)
+
+    field = f'<div class="bubble-field" style="height:{field_h:.0f}px">{"".join(bubbles)}</div>'
+    return f"""
+    <div class="pie-wrap">
+        <p class="bubble-total">Total Spent · ₹{total:,}</p>
+        {field}
+        <div class="pie-legend">{''.join(legend_rows)}</div>
+    </div>
+    """
+
+def txn_row_html(e):
+    icon = CATEGORY_ICONS.get(e["category"], "💸")
+    payee = e["payee"] or "Cash expense"
+    date = e["created_at"][:10]
+    return f"""
+    <li class="txn-row">
+        <span class="txn-avatar animate-in">{icon}</span>
+        <div class="txn-body">
+            <p class="txn-name">{payee}</p>
+            <p class="txn-meta">{e['category'].title()} · {date}</p>
+        </div>
+        <span class="txn-amount">-₹{e['amount']}</span>
+        <a class="btn-small btn-small-edit" href="/expenses/{e['id']}/edit">Edit</a>
+    </li>
+    """
+
+def badge_display(badge_type):
+    if badge_type.startswith("weekly_"):
+        n = badge_type.split("_", 1)[1]
+        return "🔥", f"{n} Days Streak"
+    if badge_type.startswith("milestone_"):
+        amt = badge_type.split("_", 1)[1]
+        return "💰", f"₹{amt} Saved"
+    if badge_type.startswith("trophy_"):
+        return "🏆", "Milestone Verified"
+    return "🏅", badge_type.replace("_", " ").title()
+
+def badge_treasure_grid_html(badge_rows):
+    if not badge_rows:
+        return "<p style='text-align:center;color:rgba(255,255,255,0.75)'>No badges earned yet.</p>"
+    cards = []
+    for b in badge_rows:
+        icon, _ = badge_display(b["badge_type"])
+        celebration_title = badge_celebration_title(b["badge_type"])
+        coins = badge_coin_reward(b["badge_type"])
+        cards.append(f"""
+        <div class="badge-card treasure-card">
+            <div class="treasure-rays"></div>
+            <span class="treasure-corner tc-tl">🌀</span>
+            <span class="treasure-corner tc-tr">🌀</span>
+            <span class="treasure-corner tc-bl">🌀</span>
+            <span class="treasure-corner tc-br">🌀</span>
+            <div class="treasure-content">
+                <div class="achv-icon">{icon}</div>
+                <h2 class="achv-title">{celebration_title}</h2>
+                <p class="achv-sub">+{coins:,}</p>
+                <p class="achv-extra">{b['earned_date']}</p>
+            </div>
+        </div>
+        """)
+    return f'<div class="badge-grid">{"".join(cards)}</div>'
+
+def short_badge_label(badge_type):
+    if badge_type.startswith("weekly_"):
+        return f"Day {badge_type.split('_', 1)[1]}"
+    if badge_type.startswith("milestone_"):
+        return f"₹{badge_type.split('_', 1)[1]}"
+    if badge_type.startswith("trophy_"):
+        return "Trophy"
+    return badge_type.replace("_", " ").title()
+
+def badge_coin_reward(badge_type):
+    if badge_type.startswith("weekly_"):
+        return 1000
+    if badge_type.startswith("milestone_"):
+        return 2000
+    if badge_type.startswith("trophy_"):
+        return int(badge_type.split("_", 1)[1])
+    return 0
+
+def badge_celebration_title(badge_type):
+    if badge_type.startswith("weekly_"):
+        return f"{badge_type.split('_', 1)[1]} DAYS STREAK!"
+    if badge_type.startswith("milestone_"):
+        return f"₹{badge_type.split('_', 1)[1]} SAVED!"
+    return badge_display(badge_type)[1].upper() + "!"
+
+KUBERA_STORY_SLIDES = [
+    ("👋", "Welcome to Kubera", "Kubera is a money app built for teens. It helps you see what you actually spend, build a saving habit that becomes your own safety net, and work toward big goals together with your parent.", "blue"),
+    ("🎮", "Why Saving Money is Like Keeping Another Life in Reserve", "<strong class=\"story-highlight\">The XP Shield:</strong> Having cash ready shields you from unexpected glitches — like a cracked phone screen or broken headphones — without blowing your entire allowance.<br><br><strong class=\"story-highlight\">Leveling Up:</strong> Systematic saving turns \"I wish I had that\" into buying your dream laptop, sneakers, or concert tickets on your own terms.<br><br><strong class=\"story-highlight\">Zero Stress:</strong> A personal cushion lets you hangout with friends, grab food, or buy what you want with total peace of mind and full independence.", "blue"),
+    ("🔥", "Starting Your Streak", "Every day, check in and save at least ₹10. Keep checking in daily and your streak grows — Day 1, Day 2, Day 3... Miss a day and it usually resets to zero, so showing up daily is the whole point.", "blue"),
+    ("🏅", "Streak Rewards", "Every 7 days of your streak — Day 7, Day 14, Day 21, and onward — you earn a badge plus 1,000 Kubera Coins. <strong class=\"story-highlight\">Keep the streak going and the badges keep coming.</strong>", "gold"),
+    ("🛡️", "Shields — Your Safety Net", "Missing a day usually resets your streak to zero. A Shield protects you instead — it absorbs one missed day so your streak survives. You earn Shields automatically as you hit streak milestones.", "gold"),
+    ("⚡", "Shield Rules", "You can hold up to 2 Shields at once. Each one expires 30 days after you earn it. And you need a 5-day gap between using one Shield and the next — no using two back-to-back.", "gold"),
+    ("🏆", "Milestone Badges", "Complete a milestone your parent sets — like acing an exam or hitting a goal — submit your proof, and once they verify it you earn real Kubera Coins plus a trophy badge for My Badges, right alongside your streak and savings cards. <strong class=\"story-highlight\">Share it and show your friends what you've earned.</strong>", "gold"),
 ]
+
+def story_row_html(kubera_seen_today, badge_rows):
+    kubera_ring = "seen" if kubera_seen_today else "unseen"
+    avatars = [f"""
+    <div class="story-avatar" data-story-type="kubera" data-story-ref="">
+        <div class="story-ring {kubera_ring}"><div class="story-pfp story-pfp-kubera">👑</div></div>
+        <p class="story-label">Kubera</p>
+    </div>
+    """]
+    for b in badge_rows:
+        icon, _ = badge_display(b["badge_type"])
+        ring = "seen" if b["seen_by_teen"] else "unseen"
+        avatars.append(f"""
+        <div class="story-avatar" data-story-type="badge" data-story-ref="{b['id']}">
+            <div class="story-ring {ring}"><div class="story-pfp">{icon}</div></div>
+            <p class="story-label">{short_badge_label(b['badge_type'])}</p>
+        </div>
+        """)
+    return f'<div class="story-row">{"".join(avatars)}</div>'
+
+def story_overlay_html(badge_rows):
+    kubera_slides = "".join(f"""
+        <div class="story-slide">
+            <div class="story-orb glossy-{accent}">
+                <span class="sheen"></span>
+                <span class="spark" style="top:14%;left:70%;animation-delay:0s">✦</span>
+                <span class="spark" style="top:66%;left:16%;animation-delay:0.6s">✦</span>
+                <span class="spark" style="top:30%;left:22%;animation-delay:1.1s">✦</span>
+                <span class="story-orb-icon">{icon}</span>
+            </div>
+            <h2 class="story-slide-title">{title}</h2>
+            <p class="story-slide-body">{body}</p>
+        </div>
+        """ for icon, title, body, accent in KUBERA_STORY_SLIDES)
+
+    badge_set_blocks = []
+    for b in badge_rows:
+        icon, _ = badge_display(b["badge_type"])
+        celebration_title = badge_celebration_title(b["badge_type"])
+        coins = badge_coin_reward(b["badge_type"])
+        badge_set_blocks.append(f"""
+        <div class="story-slide-set" data-story-type="badge" data-story-ref="{b['id']}">
+            <div class="story-slide">
+                <div class="story-badge-card treasure-card">
+                    <div class="treasure-rays"></div>
+                    <span class="treasure-corner tc-tl">🌀</span>
+                    <span class="treasure-corner tc-tr">🌀</span>
+                    <span class="treasure-corner tc-bl">🌀</span>
+                    <span class="treasure-corner tc-br">🌀</span>
+                    <div class="treasure-content">
+                        <div class="achv-icon">{icon}</div>
+                        <h2 class="achv-title">{celebration_title}</h2>
+                        <p class="achv-sub">+{coins:,} Kubera Coins</p>
+                        <p class="achv-extra">Earned {b['earned_date']}</p>
+                    </div>
+                </div>
+                <div class="story-share-row">
+                    <div class="share-button">📤 Share</div>
+                </div>
+            </div>
+        </div>
+        """)
+    badge_sets = "".join(badge_set_blocks)
+
+    return f"""
+    <div id="story-overlay" class="story-overlay">
+        <div class="story-chrome">
+            <div class="story-segments" id="story-segments"></div>
+            <div class="story-header">
+                <span class="story-header-icon" id="story-header-icon"></span>
+                <span class="story-header-title" id="story-header-title"></span>
+                <button type="button" class="story-close" id="story-close">✕</button>
+            </div>
+        </div>
+        <div id="story-slides">
+            <div class="story-slide-set" data-story-type="kubera" data-story-ref="">
+                {kubera_slides}
+            </div>
+            {badge_sets}
+        </div>
+        <div class="story-tap-zone story-tap-left" id="story-tap-left"></div>
+        <div class="story-tap-zone story-tap-right" id="story-tap-right"></div>
+        <p class="story-hold-hint" id="story-hold-hint">Hold to pause, release to resume</p>
+    </div>
+    <script>
+    (function() {{
+        var avatars = document.querySelectorAll('.story-avatar');
+        var overlay = document.getElementById('story-overlay');
+        var segmentsEl = document.getElementById('story-segments');
+        var headerIcon = document.getElementById('story-header-icon');
+        var headerTitle = document.getElementById('story-header-title');
+        var closeBtn = document.getElementById('story-close');
+        var tapLeft = document.getElementById('story-tap-left');
+        var tapRight = document.getElementById('story-tap-right');
+        var holdHint = document.getElementById('story-hold-hint');
+        var holdHintDismissed = false;
+
+        var currentType = null;
+        var currentRef = '';
+        var currentSlide = 0;
+        var autoTimer = null;
+        var SLIDE_MS = 5000;
+        var HOLD_THRESHOLD_MS = 250;
+        var isPaused = false;
+        var slideStartedAt = 0;
+        var remainingMs = SLIDE_MS;
+
+        function activeSet() {{
+            return document.querySelector('.story-slide-set[data-story-type="' + currentType + '"][data-story-ref="' + currentRef + '"]');
+        }}
+
+        function clearAutoTimer() {{
+            if (autoTimer) {{ clearTimeout(autoTimer); autoTimer = null; }}
+        }}
+
+        function currentFill() {{
+            var segs = segmentsEl.querySelectorAll('.story-segment');
+            var seg = segs[currentSlide];
+            return seg ? seg.querySelector('.story-segment-fill') : null;
+        }}
+
+        function openStory(type, ref, iconText, labelText) {{
+            currentType = type;
+            currentRef = ref;
+            var slides = activeSet().querySelectorAll('.story-slide');
+            segmentsEl.innerHTML = '';
+            for (var i = 0; i < slides.length; i++) {{
+                var seg = document.createElement('div');
+                seg.className = 'story-segment';
+                var fill = document.createElement('div');
+                fill.className = 'story-segment-fill';
+                seg.appendChild(fill);
+                segmentsEl.appendChild(seg);
+            }}
+            headerIcon.textContent = iconText;
+            headerTitle.textContent = labelText;
+            showSlide(0);
+            overlay.classList.add('open');
+            markSeen(type, ref);
+        }}
+
+        function showSlide(idx) {{
+            // Clear .active globally, not just on this story's slides — a
+            // previously-opened story's slide staying .active is what made
+            // two different stories render stacked on top of each other.
+            document.querySelectorAll('.story-slide.active').forEach(function(s) {{
+                s.classList.remove('active');
+            }});
+            var slides = activeSet().querySelectorAll('.story-slide');
+            currentSlide = idx;
+            slides[idx].classList.add('active');
+
+            var segs = segmentsEl.querySelectorAll('.story-segment');
+            segs.forEach(function(seg, i) {{
+                var fill = seg.querySelector('.story-segment-fill');
+                fill.style.animation = 'none';
+                void fill.offsetWidth; // restart the fill animation from 0 on re-trigger
+                if (i < idx) {{
+                    seg.classList.add('filled');
+                    fill.style.width = '100%';
+                }} else if (i === idx) {{
+                    seg.classList.remove('filled');
+                    fill.style.width = '0%';
+                    fill.style.animation = 'story-progress ' + SLIDE_MS + 'ms linear forwards';
+                    fill.style.animationPlayState = 'running';
+                }} else {{
+                    seg.classList.remove('filled');
+                    fill.style.width = '0%';
+                }}
+            }});
+
+            isPaused = false;
+            remainingMs = SLIDE_MS;
+            slideStartedAt = Date.now();
+            clearAutoTimer();
+            autoTimer = setTimeout(nextSlide, remainingMs);
+        }}
+
+        function pauseStory() {{
+            if (isPaused) return;
+            isPaused = true;
+            clearAutoTimer();
+            var elapsed = Date.now() - slideStartedAt;
+            remainingMs = Math.max(0, remainingMs - elapsed);
+            var fill = currentFill();
+            if (fill) {{ fill.style.animationPlayState = 'paused'; }}
+        }}
+
+        function resumeStory() {{
+            if (!isPaused) return;
+            isPaused = false;
+            slideStartedAt = Date.now();
+            autoTimer = setTimeout(nextSlide, remainingMs);
+            var fill = currentFill();
+            if (fill) {{ fill.style.animationPlayState = 'running'; }}
+        }}
+
+        function nextSlide() {{
+            var count = activeSet().querySelectorAll('.story-slide').length;
+            if (currentSlide + 1 < count) {{ showSlide(currentSlide + 1); }}
+            else {{ closeStory(); }}
+        }}
+
+        function prevSlide() {{
+            if (currentSlide > 0) {{ showSlide(currentSlide - 1); }}
+        }}
+
+        function closeStory() {{
+            clearAutoTimer();
+            isPaused = false;
+            overlay.classList.remove('open');
+            currentType = null;
+            currentRef = '';
+        }}
+
+        function markSeen(type, ref) {{
+            var url = type === 'kubera' ? '/stories/kubera/seen' : '/stories/badge/' + ref + '/seen';
+            fetch(url, {{ method: 'POST' }}).then(function() {{
+                var sel = '.story-avatar[data-story-type="' + type + '"][data-story-ref="' + ref + '"]';
+                var avatar = document.querySelector(sel);
+                if (avatar) {{
+                    var ring = avatar.querySelector('.story-ring');
+                    if (ring) {{ ring.classList.remove('unseen'); ring.classList.add('seen'); }}
+                }}
+            }});
+        }}
+
+        avatars.forEach(function(a) {{
+            a.addEventListener('click', function() {{
+                var type = a.dataset.storyType;
+                var ref = a.dataset.storyRef;
+                var iconText = a.querySelector('.story-pfp').textContent;
+                var labelText = a.querySelector('.story-label').textContent;
+                openStory(type, ref, iconText, labelText);
+            }});
+        }});
+        closeBtn.addEventListener('click', closeStory);
+
+        // Press-and-hold anywhere on the slide pauses the timer and the
+        // progress fill exactly where it is; releasing resumes from there.
+        // A quick press-release (under HOLD_THRESHOLD_MS) counts as a tap
+        // instead, and navigates — so the same zone does both jobs, same as
+        // a real Instagram story.
+        function wireTapZone(zone, navigateFn) {{
+            var downAt = 0;
+            zone.addEventListener('pointerdown', function(e) {{
+                downAt = Date.now();
+                if (zone.setPointerCapture) {{
+                    try {{ zone.setPointerCapture(e.pointerId); }} catch (err) {{}}
+                }}
+                pauseStory();
+            }});
+            zone.addEventListener('pointerup', function() {{
+                var heldFor = Date.now() - downAt;
+                if (heldFor < HOLD_THRESHOLD_MS) {{
+                    navigateFn();
+                }} else {{
+                    resumeStory();
+                    if (!holdHintDismissed) {{
+                        holdHintDismissed = true;
+                        holdHint.style.display = 'none';
+                    }}
+                }}
+            }});
+            zone.addEventListener('pointercancel', resumeStory);
+        }}
+        wireTapZone(tapLeft, prevSlide);
+        wireTapZone(tapRight, nextSlide);
+
+        document.addEventListener('keydown', function(e) {{
+            if (!overlay.classList.contains('open')) return;
+            if (e.key === 'Escape') closeStory();
+            if (e.key === 'ArrowRight') nextSlide();
+            if (e.key === 'ArrowLeft') prevSlide();
+        }});
+    }})();
+    </script>
+    """
 
 def today_utc():
     return datetime.now(timezone.utc).date()
@@ -70,6 +718,36 @@ def award_milestones(anon_id, old_balance, new_balance):
         messages.append(f"New milestone badge: ₹{t} saved! +2,000 Kubera Coins.")
     return messages
 
+def generate_insights(balance, streak, expenses, milestone_rows):
+    lines = []
+
+    if streak["debt_remaining"] > 0:
+        lines.append(f"⚠️ In Refill Mode — streak frozen while paying back ₹{streak['debt_remaining']} from an emergency cushion withdrawal.")
+
+    today = today_utc()
+    month_start_iso = datetime(today.year, today.month, 1, tzinfo=timezone.utc).isoformat()
+    spent_this_month = sum(e["amount"] for e in expenses if e["created_at"] >= month_start_iso)
+    total_this_cycle = spent_this_month + balance
+    if 15 <= today.day <= 20 and total_this_cycle > 0 and spent_this_month / total_this_cycle >= 0.75:
+        lines.append("💸 He's spending a lot of money — wallet is nearly empty. He needs to put a brake on his desires.")
+
+    streak_count = streak["streak_count"]
+    if streak_count >= 21:
+        lines.append(f"🔥 On fire! Day {streak_count} streak — he's an incredibly consistent saver.")
+    elif streak_count >= 14:
+        lines.append(f"🔥 Day {streak_count} streak — he's really good at saving, a great habit forming!")
+    elif streak_count >= 7:
+        lines.append(f"🔥 Day {streak_count} streak — off to a great start on saving!")
+
+    verified_count = len([m for m in milestone_rows if m["status"] == "verified"])
+    if verified_count > 0:
+        lines.append(f"🏆 Verified {verified_count} milestone{'s' if verified_count != 1 else ''} so far — real progress on the big goals.")
+
+    if not lines:
+        lines.append("Nothing unusual to report — steady as usual.")
+
+    return lines[:3]
+
 def toast_html(element_id, lines):
     return f"""
     <div id="{element_id}" style="background:#222;color:#fff;padding:10px;border-radius:6px;display:inline-block;">
@@ -83,36 +761,266 @@ def toast_html(element_id, lines):
     </script>
     """
 
+def reengage_banner_html():
+    return """
+    <div id="reengage-banner" class="reengage-banner">
+        <div class="reengage-progress"><div class="reengage-progress-fill"></div></div>
+        <a href="/expenses/today" class="reengage-content">
+            <span class="reengage-icon">👀</span>
+            <span class="reengage-text">Where did today's money go? Tap to tell us!</span>
+        </a>
+        <button type="button" class="reengage-close" id="reengage-close" aria-label="Dismiss">✕</button>
+    </div>
+    <script>
+    (function() {
+        var banner = document.getElementById('reengage-banner');
+        var closeBtn = document.getElementById('reengage-close');
+        var dismissed = false;
+        function dismiss() {
+            if (dismissed) return;
+            dismissed = true;
+            banner.classList.add('closing');
+            setTimeout(function() { banner.remove(); }, 350);
+        }
+        closeBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dismiss();
+        });
+        setTimeout(dismiss, 5000);
+    })();
+    </script>
+    """
+
+def get_notifications(anon_id, view_mode):
+    items = []
+    if view_mode == "parent":
+        reqs = supabase.table("kubera_approval_requests").select("*").eq("anon_id", anon_id).eq("status", "pending").execute().data
+        items += [f'⏳ "{r["payee"] or "cash"}" — ₹{r["amount"]} needs your approval' for r in reqs]
+        claimed = supabase.table("kubera_milestones").select("*").eq("anon_id", anon_id).eq("status", "claimed").execute().data
+        items += [f'📋 "{m["title"]}" is ready for you to verify' for m in claimed]
+    else:
+        reqs = supabase.table("kubera_approval_requests").select("*").eq("anon_id", anon_id).eq("seen_by_teen", False).neq("status", "pending").execute().data
+        for r in reqs:
+            label = r["payee"] or "cash"
+            items.append(f"✅ Approved: ₹{r['amount']} at {label}" if r["status"] == "approved" else f"❌ Declined: ₹{r['amount']} at {label}")
+        verified = supabase.table("kubera_milestones").select("*").eq("anon_id", anon_id).eq("seen_by_teen", False).eq("status", "verified").execute().data
+        items += [f'🎉 "{m["title"]}" verified! +{m["coin_reward"]} coins' for m in verified]
+    return items
+
+def page(body, active_tab=None, hide_topbar=False):
+    # active_tab is vestigial now that the app is one scrolling page instead
+    # of three tabs — left on every call site rather than touched, since
+    # removing it everywhere would be a lot of churn for zero behavior change.
+    anon_id = session.get("anon_id")
+    view_mode = session.get("view_mode", "teen")
+    notif_items = get_notifications(anon_id, view_mode) if anon_id else []
+    bell_dot = '<span class="bell-dot"></span>' if notif_items else ""
+    notif_list = "".join(f"<li>{n}</li>" for n in notif_items) or "<li>No new notifications.</li>"
+
+    action_footer = ""
+    if view_mode == "teen":
+        action_footer = """
+<div class="action-footer">
+    <a class="action-footer-btn action-footer-save" href="/checkin">💰 Save</a>
+    <a class="action-footer-btn action-footer-pay" href="/pay">💳 Pay</a>
+</div>
+"""
+
+    # The topbar's buttons (menu-btn, bell-btn) are wired up unconditionally
+    # by the script in `tail` below, so on a page that hides the topbar
+    # (hide_topbar=True) it's kept in the DOM and just visually hidden via
+    # CSS, rather than omitted outright — omitting it would make that wiring
+    # script crash on a null element and silently break other unrelated JS
+    # (the scroll-in animations) further down the same script block.
+    topbar_style = ' style="display:none"' if hide_topbar else ""
+    head = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kubera</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="topbar"{topbar_style}>
+    <button id="menu-btn" class="menu-btn">☰</button>
+    <div class="topbar-title-group">
+        <span class="topbar-title" style="color:inherit;flex:none">KUBERA</span>
+        <span class="topbar-sub">Teen Finance</span>
+    </div>
+    <button id="bell-btn" class="bell-btn">🔔{bell_dot}</button>
+</div>
+<div id="nav-overlay" class="nav-overlay"></div>
+<nav id="nav-drawer" class="nav-drawer">
+    <a href="/switch-view/teen">Switch to Teen view</a>
+    <a href="/switch-view/parent">Switch to Parent view</a>
+</nav>
+<div id="bell-overlay" class="nav-overlay"></div>
+<div id="bell-panel" class="bell-panel">
+    <p class="card-title">Notifications</p>
+    <ul>{notif_list}</ul>
+</div>
+<div id="achv-stage" class="achv-stage">
+    <div id="achv-fountain" class="achv-fountain"></div>
+    <div id="achv-modal" class="achv-modal treasure-card">
+        <div class="treasure-rays"></div>
+        <span class="treasure-corner tc-tl">🌀</span>
+        <span class="treasure-corner tc-tr">🌀</span>
+        <span class="treasure-corner tc-bl">🌀</span>
+        <span class="treasure-corner tc-br">🌀</span>
+        <div class="treasure-content">
+            <div class="achv-icon" id="achv-icon">🏆</div>
+            <h2 class="achv-title" id="achv-title">Achievement!</h2>
+            <p class="achv-sub" id="achv-sub">+0 Kubera Coins</p>
+            <p class="achv-extra" id="achv-extra"></p>
+            <button class="achv-close btn-hero" id="achv-close">Nice!</button>
+        </div>
+    </div>
+</div>
+<script>
+window.showAchievements = function(cards) {{
+    var stage = document.getElementById('achv-stage');
+    var fountain = document.getElementById('achv-fountain');
+    var iconEl = document.getElementById('achv-icon');
+    var titleEl = document.getElementById('achv-title');
+    var subEl = document.getElementById('achv-sub');
+    var extraEl = document.getElementById('achv-extra');
+    var closeBtn = document.getElementById('achv-close');
+    var queue = cards.slice();
+
+    function spawnCoins() {{
+        var spawner = setInterval(function() {{
+            var coin = document.createElement('span');
+            coin.className = 'coin-particle';
+            coin.textContent = '🪙';
+            coin.style.setProperty('--dx', ((Math.random() * 2 - 1) * 130) + 'px');
+            coin.style.setProperty('--rise', (-(130 + Math.random() * 90)) + 'px');
+            coin.style.setProperty('--rot', ((Math.random() * 2 - 1) * 360) + 'deg');
+            coin.style.setProperty('--dur', (1.3 + Math.random() * 0.9) + 's');
+            fountain.appendChild(coin);
+            setTimeout(function() {{ coin.remove(); }}, 2500);
+        }}, 90);
+        setTimeout(function() {{ clearInterval(spawner); }}, 3000);
+    }}
+
+    function countUp(target) {{
+        var start = null;
+        var duration = 2600;
+        function step(ts) {{
+            if (!start) {{ start = ts; }}
+            var p = Math.min((ts - start) / duration, 1);
+            subEl.textContent = '+' + Math.round(target * p).toLocaleString() + ' Kubera Coins';
+            if (p < 1) {{ requestAnimationFrame(step); }}
+        }}
+        requestAnimationFrame(step);
+    }}
+
+    function showNext() {{
+        if (queue.length === 0) {{
+            stage.classList.remove('open');
+            fountain.innerHTML = '';
+            return;
+        }}
+        var card = queue.shift();
+        iconEl.textContent = card.icon;
+        titleEl.textContent = card.title;
+        extraEl.textContent = card.extra || '';
+        stage.classList.add('open');
+        fountain.innerHTML = '';
+        spawnCoins();
+        countUp(card.amount);
+    }}
+
+    closeBtn.onclick = showNext;
+    showNext();
+}};
+</script>
+<div class="container">
+"""
+    tail = """
+</div>
+<script>
+(function() {
+  function wire(btn, panel, overlay) {
+    btn.addEventListener('click', function() {
+      panel.classList.add('open');
+      overlay.classList.add('open');
+    });
+  }
+  var menuBtn = document.getElementById('menu-btn');
+  var drawer = document.getElementById('nav-drawer');
+  var navOverlay = document.getElementById('nav-overlay');
+  var bellBtn = document.getElementById('bell-btn');
+  var bellPanel = document.getElementById('bell-panel');
+  var bellOverlay = document.getElementById('bell-overlay');
+
+  function closeAll() {
+    drawer.classList.remove('open');
+    navOverlay.classList.remove('open');
+    bellPanel.classList.remove('open');
+    bellOverlay.classList.remove('open');
+  }
+
+  wire(menuBtn, drawer, navOverlay);
+  wire(bellBtn, bellPanel, bellOverlay);
+  navOverlay.addEventListener('click', closeAll);
+  bellOverlay.addEventListener('click', closeAll);
+  var links = drawer.querySelectorAll('a');
+  for (var i = 0; i < links.length; i++) { links[i].addEventListener('click', closeAll); }
+
+  var animated = document.querySelectorAll('.animate-in');
+  if ('IntersectionObserver' in window) {
+    var scrollObs = new IntersectionObserver(function(entries) {
+      entries.forEach(function(entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('in-view');
+        }
+      });
+    }, { threshold: 0.4 });
+    animated.forEach(function(el) { scrollObs.observe(el); });
+  } else {
+    animated.forEach(function(el) { el.classList.add('in-view'); });
+  }
+})();
+</script>
+</body>
+</html>"""
+    return head + body + action_footer + tail
+
 @app.route("/")
 def home():
-    if "anon_id" not in session:
-        new_id = str(uuid.uuid4())
-        session["anon_id"] = new_id
-        supabase.table("kubera_sessions").insert({"anon_id": new_id}).execute()
-        supabase.table("kubera_wallets").insert({"anon_id": new_id}).execute()
-        supabase.table("kubera_streaks").insert({"anon_id": new_id}).execute()
-        supabase.table("kubera_coins").insert({"anon_id": new_id}).execute()
-        supabase.table("kubera_milestones").insert([
-            {"anon_id": new_id, "title": title, "coin_reward": reward}
-            for title, reward in DEMO_MILESTONES
-        ]).execute()
-
-    if "view_mode" not in session:
-        session["view_mode"] = "teen"
-
     anon_id = session["anon_id"]
 
     wallet = supabase.table("kubera_wallets").select("balance").eq("anon_id", anon_id).single().execute()
     balance = wallet.data["balance"]
 
     coins = supabase.table("kubera_coins").select("*").eq("anon_id", anon_id).single().execute().data
-    coins_line = f"Kubera Coins: {coins['current_coins']} / {coins['max_coins']} toward the Main Goal<br>"
+    goal_pct = min(100, round(coins["current_coins"] / coins["max_coins"] * 100)) if coins["max_coins"] else 0
+    edit_link = '<a class="edit-link" href="/goal/edit">Edit</a>'
+    main_goal_card = f"""
+    <div class="hero-card hero-goal">
+        <div class="goal-orb"></div>
+        <div class="goal-body">
+            <p class="goal-label">My Macro Goal</p>
+            <div class="goal-name-row">
+                <h2 class="goal-name-text">{coins['goal_name']}</h2>
+                {edit_link}
+            </div>
+            <div class="goal-progress-wrap">
+                <div class="goal-ticks"><span>50%</span><span>75%</span><span>100%</span></div>
+                <div class="goal-track"><div class="goal-fill" style="width:{goal_pct}%"></div></div>
+            </div>
+            <p class="goal-coins-text">{coins['current_coins']:,} / {coins['max_coins']:,} Kubera Coins</p>
+        </div>
+    </div>
+    """
 
-    milestone_rows = supabase.table("kubera_milestones").select("*").eq("anon_id", anon_id).execute().data
+    milestone_rows = supabase.table("kubera_milestones").select("*").eq("anon_id", anon_id).order("created_at").execute().data
 
     if session["view_mode"] == "parent":
         badge_rows = supabase.table("kubera_badges").select("*").eq("anon_id", anon_id).order("earned_date").execute().data
-        badges_html = "".join(f"<li>{b['badge_type']} — earned {b['earned_date']}</li>" for b in badge_rows) or "<li>No badges earned yet.</li>"
+        badges_html = badge_treasure_grid_html(badge_rows)
 
         newly_claimed = [m for m in milestone_rows if m["status"] == "claimed" and not m["seen_by_parent"]]
         milestone_toast_block = ""
@@ -122,21 +1030,237 @@ def home():
                 supabase.table("kubera_milestones").update({"seen_by_parent": True}).eq("id", m["id"]).execute()
             milestone_toast_block = toast_html("milestone-claimed-toast", lines)
 
-        view_block = f"""
-        Wallet balance left with your teen: ₹{balance}<br>
-        <a href="/parent/requests">Pending approval requests</a><br>
-        {coins_line}
-        <a href="/parent/milestones">Manage milestones</a><br>
-        {milestone_toast_block}
-        <h3>Badges earned</h3>
-        <ul>{badges_html}</ul>
+        all_reqs = supabase.table("kubera_approval_requests").select("*").eq("anon_id", anon_id).order("created_at", desc=True).execute().data
+        pending_reqs = [r for r in all_reqs if r["status"] == "pending"]
+        approved_reqs = [r for r in all_reqs if r["status"] == "approved"]
+        declined_reqs = [r for r in all_reqs if r["status"] == "declined"]
+
+        pending_ms = [m for m in milestone_rows if m["status"] == "pending"]
+        claimed_ms = [m for m in milestone_rows if m["status"] == "claimed"]
+        verified_ms = [m for m in milestone_rows if m["status"] == "verified"]
+
+        # ---- Placards: Approval Needed / Milestone Ready / Insight, in that
+        # priority order — Insight always last if either action card is present,
+        # Insight-only if neither is ----
+        streak = supabase.table("kubera_streaks").select("*").eq("anon_id", anon_id).single().execute().data
+        all_expenses = supabase.table("kubera_expenses").select("*").eq("anon_id", anon_id).execute().data
+        insight_lines = generate_insights(balance, streak, all_expenses, milestone_rows)
+        insight_card = f"""
+        <div class="card card-red placard">
+            <span class="placard-holo-bar"><span class="placard-holo-sheen"></span></span>
+            <p class="card-title">🧭 Insight</p>
+            {"".join(f'<p class="placard-line">{line}</p>' for line in insight_lines)}
+        </div>
         """
+
+        payment_card = ""
+        if pending_reqs:
+            if len(pending_reqs) == 1:
+                r = pending_reqs[0]
+                req_summary = f"₹{r['amount']} at {r['payee'] or 'cash'} is waiting for your approval."
+            else:
+                oldest = pending_reqs[-1]
+                req_summary = f"{len(pending_reqs)} requests waiting — oldest: ₹{oldest['amount']} at {oldest['payee'] or 'cash'}."
+            payment_card = f"""
+            <div class="card card-blue placard">
+                <span class="placard-holo-bar"><span class="placard-holo-sheen"></span></span>
+                <p class="card-title">💳 Approval Needed</p>
+                <p class="placard-line">{req_summary}</p>
+                <a class="placard-link" href="#requests-section">Review requests →</a>
+            </div>
+            """
+
+        milestone_card = ""
+        if claimed_ms:
+            if len(claimed_ms) == 1:
+                m = claimed_ms[0]
+                ms_summary = f"\"{m['title']}\" is ready for you to verify."
+            else:
+                oldest = claimed_ms[0]
+                ms_summary = f"{len(claimed_ms)} milestones ready to verify — oldest: \"{oldest['title']}\"."
+            milestone_card = f"""
+            <div class="card card-gold placard">
+                <span class="placard-holo-bar"><span class="placard-holo-sheen"></span></span>
+                <p class="card-title">📋 Milestone Ready</p>
+                <p class="placard-line">{ms_summary}</p>
+                <a class="placard-link" href="#milestones-section">Review milestones →</a>
+            </div>
+            """
+
+        placard_row = f'<div class="placard-row">{payment_card}{milestone_card}{insight_card}</div>'
+
+        overview_section = f"""
+        <div id="overview-section">
+        {placard_row}
+        <p class="section-heading">👋 Overview</p>
+        {main_goal_card}
+        <div class="card card-wallet-bg">
+            <p class="card-title">Wallet left with your teen</p>
+            <p class="card-value">₹{balance}</p>
+            <div style="text-align:right;margin-top:10px">
+                <a class="btn-small btn-small-refill" href="/parent/wallet/refill">🔄 Refill Wallet</a>
+            </div>
+        </div>
+        {milestone_toast_block}
+        <div class="card card-badges-bg">
+            <p class="card-title">Badges earned</p>
+            {badges_html}
+        </div>
+        </div>
+        """
+
+        # ---- Requests section (used to be its own page, now scrolled to) ----
+        pending_req_items = "".join(f"""
+        <div class="item-card item-card-blue">
+            <span class="item-card-icon animate-in">⏳</span>
+            <div class="item-card-body">
+                <p class="item-card-title">₹{r['amount']} at {r['payee'] or 'cash'}</p>
+                <p class="item-card-meta">{r['category']}</p>
+            </div>
+            <div class="item-card-action">
+                <form method="POST" action="/parent/requests/{r['id']}/approve" style="display:inline">
+                    <button type="submit" class="btn-small btn-small-approve">Approve</button>
+                </form>
+                <form method="POST" action="/parent/requests/{r['id']}/decline" style="display:inline">
+                    <button type="submit" class="btn-small btn-small-decline">Decline</button>
+                </form>
+            </div>
+        </div>
+        """ for r in pending_reqs) or '<p style="text-align:center;color:var(--text-muted)">Nothing pending right now.</p>'
+
+        approved_req_items = "".join(f"""
+        <div class="item-card item-card-green">
+            <span class="item-card-icon animate-in">✅</span>
+            <div class="item-card-body">
+                <p class="item-card-title">₹{r['amount']} at {r['payee'] or 'cash'}</p>
+                <p class="item-card-meta">{r['category']}</p>
+            </div>
+        </div>
+        """ for r in approved_reqs) or '<p style="text-align:center;color:var(--text-muted)">None yet.</p>'
+
+        declined_req_items = "".join(f"""
+        <div class="item-card item-card-red">
+            <span class="item-card-icon animate-in">❌</span>
+            <div class="item-card-body">
+                <p class="item-card-title">₹{r['amount']} at {r['payee'] or 'cash'}</p>
+                <p class="item-card-meta">{r['category']}</p>
+            </div>
+        </div>
+        """ for r in declined_reqs) or '<p style="text-align:center;color:var(--text-muted)">None yet.</p>'
+
+        requests_section = f"""
+        <div id="requests-section">
+        <p class="section-heading">📝 Requests</p>
+        <p style="text-align:center;color:var(--text-muted);margin-top:-8px">Wallet balance: ₹{balance} left.</p>
+        {pending_req_items}
+        <div class="card">
+            <p class="card-title">Approved</p>
+            {approved_req_items}
+        </div>
+        <div class="card">
+            <p class="card-title">Declined</p>
+            {declined_req_items}
+        </div>
+        </div>
+        """
+
+        # ---- Milestones section (used to be its own page, now scrolled to) ----
+        pending_ms_items = "".join(f"""
+        <div class="item-card">
+            <span class="item-card-icon animate-in">🎯</span>
+            <div class="item-card-body">
+                <p class="item-card-title">{m['title']}</p>
+                <p class="item-card-meta item-card-reward">+{m['coin_reward']} coins — not claimed yet</p>
+            </div>
+        </div>
+        """ for m in pending_ms) or '<p style="text-align:center;color:var(--text-muted)">None.</p>'
+
+        claimed_ms_items = "".join(f"""
+        <div class="item-card item-card-gold item-card-actions-below">
+            <span class="item-card-icon animate-in">📋</span>
+            <div class="item-card-body">
+                <p class="item-card-title">{m['title']}</p>
+                <p class="item-card-meta item-card-reward">+{m['coin_reward']} coins</p>
+                <p class="item-card-meta">Your teen says: "{m['note']}"</p>
+            </div>
+            <div class="item-card-action">
+                <form method="POST" action="/parent/milestones/{m['id']}/verify" style="display:inline">
+                    <button type="submit" class="btn-small btn-small-approve">Verify</button>
+                </form>
+                <form method="POST" action="/parent/milestones/{m['id']}/reject" style="display:inline">
+                    <button type="submit" class="btn-small btn-small-decline">Reject</button>
+                </form>
+            </div>
+        </div>
+        """ for m in claimed_ms) or '<p style="text-align:center;color:var(--text-muted)">None.</p>'
+
+        verified_ms_items = "".join(f"""
+        <div class="item-card item-card-gold">
+            <span class="item-card-icon animate-in">🏆</span>
+            <div class="item-card-body">
+                <p class="item-card-title">{m['title']}</p>
+                <p class="item-card-meta item-card-reward">+{m['coin_reward']} coins — verified {m['verified_at'][:10]}</p>
+            </div>
+        </div>
+        """ for m in verified_ms) or '<p style="text-align:center;color:var(--text-muted)">None yet.</p>'
+
+        milestones_section = f"""
+        <div id="milestones-section">
+        <p class="section-heading">🎯 Milestones</p>
+        <div class="card">
+            <p class="card-title">Waiting on your teen</p>
+            {pending_ms_items}
+        </div>
+        <div class="card">
+            <p class="card-title">Ready to verify</p>
+            {claimed_ms_items}
+        </div>
+        <div class="card card-gold">
+            <p class="card-title">Verified</p>
+            {verified_ms_items}
+        </div>
+        <div class="card">
+            <p class="card-title">Add a new milestone</p>
+            <form method="POST" action="/parent/milestones">
+                <label>Title: <input type="text" name="title" required></label><br>
+                <label>Coin reward: <input type="number" name="coin_reward" min="1" required></label><br>
+                <button type="submit" class="btn-primary">Add milestone</button>
+            </form>
+        </div>
+        </div>
+        """
+
+        view_block = overview_section + requests_section + milestones_section
     else:
+        badge_rows = supabase.table("kubera_badges").select("*").eq("anon_id", anon_id).order("earned_date").execute().data
+        teen_session = supabase.table("kubera_sessions").select("kubera_intro_seen_date, last_reviewed_at").eq("anon_id", anon_id).single().execute().data
+        kubera_seen_today = teen_session["kubera_intro_seen_date"] == today_utc().isoformat()
+        story_block = story_row_html(kubera_seen_today, badge_rows) + story_overlay_html(badge_rows)
+
+        # Re-engagement nudge: a hard-to-miss banner (not a quiet toast) that
+        # fires on EVERY app-open as long as there's a real payment the teen
+        # hasn't reviewed yet — not a visit counter. Visiting /expenses/today
+        # (which only the banner links to) marks everything up to now as
+        # reviewed; a brand-new payment makes it unreviewed again. A fresh
+        # account with no expenses yet never shows it, so it never competes
+        # with the first-time Kubera intro story.
+        latest_expense = supabase.table("kubera_expenses").select("created_at").eq("anon_id", anon_id).order("created_at", desc=True).limit(1).execute().data
+        last_reviewed_at = teen_session["last_reviewed_at"]
+        if latest_expense and (last_reviewed_at is None or latest_expense[0]["created_at"] > last_reviewed_at):
+            story_block += reengage_banner_html()
+
         all_reqs = supabase.table("kubera_approval_requests").select("*").eq("anon_id", anon_id).execute().data
 
         pending_reqs = [r for r in all_reqs if r["status"] == "pending"]
-        pending_lines = [f"⏳ Waiting for parent: \"Can I spend ₹{r['amount']} at {r['payee'] or 'cash'}?\"" for r in pending_reqs]
-        pending_block = ("<p>" + "<br>".join(pending_lines) + "</p>") if pending_lines else ""
+        pending_block = "".join(f"""
+        <div class="item-card item-card-blue">
+            <span class="item-card-icon animate-in">⏳</span>
+            <div class="item-card-body">
+                <p class="item-card-title">₹{r['amount']} at {r['payee'] or 'cash'}</p>
+                <p class="item-card-meta">Waiting for your parent to approve</p>
+            </div>
+        </div>
+        """ for r in pending_reqs)
 
         newly_resolved = [r for r in all_reqs if r["status"] != "pending" and not r["seen_by_teen"]]
         toast_block = ""
@@ -160,93 +1284,382 @@ def home():
             milestone_toast_block = toast_html("milestone-verified-toast", lines)
 
         streak = supabase.table("kubera_streaks").select("*").eq("anon_id", anon_id).single().execute().data
-        shields_count = len(available_shields(anon_id, today_utc()))
+        avail_shields = available_shields(anon_id, today_utc())
+        shields_count = len(avail_shields)
+
+        if shields_count > 0:
+            soonest_days = min((parse_date(s["earned_date"]) + timedelta(days=30) - today_utc()).days for s in avail_shields)
 
         if streak["debt_remaining"] > 0:
-            streak_block = f"""
-            <p>⚠️ Refill Mode — ₹{streak['debt_remaining']} debt left.<br>
-            Streak frozen at Day {streak['streak_count']}, savings frozen at ₹{streak['cushion_balance']}.</p>
+            debt_card = f"""
+            <div class="hero-card hero-debt">
+                <p class="hero-title">⚠️ Refill Mode</p>
+                <p style="margin:0">₹{streak['debt_remaining']} debt left. Streak frozen at Day {streak['streak_count']}, savings frozen at ₹{streak['cushion_balance']}.</p>
+            </div>
             """
         else:
-            streak_block = f"""
-            Streak: Day {streak['streak_count']}<br>
-            Cushion saved: ₹{streak['cushion_balance']}<br>
-            Shields available: {shields_count}<br>
-            <a href="/cushion/spend">Emergency spend from cushion</a><br>
-            """
+            debt_card = ""
 
-        view_block = f"""
-        Wallet balance: ₹{balance}<br>
+        cushion_wallet_row = f"""
+        <div class="hero-row">
+            <div class="hero-card hero-green">
+                <p class="hero-title">Savings</p>
+                <p class="hero-sub">(Real Money)</p>
+                <p class="hero-value">₹{streak['cushion_balance']}</p>
+                <a class="hero-link" href="/cushion/spend">💸 Withdraw</a>
+            </div>
+            <div class="hero-card hero-indigo">
+                <p class="hero-title">Wallet</p>
+                <p class="hero-sub">(Spendable)</p>
+                <p class="hero-value">₹{balance}</p>
+                <a class="hero-link" href="#track-section">View activity</a>
+            </div>
+        </div>
+        """
+
+        habits_card = f"""
+        <p class="section-heading" style="margin-bottom:6px">Daily Habits</p>
+        <div class="habits-row">
+            <div class="habit-stat">
+                <span class="habit-big-icon flame-icon animate-in">🔥</span>
+                <div class="habit-text">
+                    <p class="habit-stat-label">🔥 Streak</p>
+                    <p class="habit-stat-value">{streak['streak_count']} Days</p>
+                </div>
+            </div>
+            <div class="habit-divider"></div>
+            <div class="habit-stat">
+                <span class="habit-big-icon shield-icon animate-in">
+                    <svg viewBox="0 0 24 24">
+                        <defs>
+                            <radialGradient id="shield-glossy-gold" cx="32%" cy="26%" r="75%">
+                                <stop offset="0%" stop-color="#FEF3C7"></stop>
+                                <stop offset="55%" stop-color="#EAB308"></stop>
+                                <stop offset="100%" stop-color="#92400E"></stop>
+                            </radialGradient>
+                        </defs>
+                        <path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5l8-3z" fill="url(#shield-glossy-gold)"></path>
+                    </svg>
+                </span>
+                <div class="habit-text">
+                    <p class="habit-stat-label">🛡️ Shields</p>
+                    <p class="habit-stat-value">{shields_count}/2 Available</p>
+                    <p class="habit-stat-sub">{("Expiry: " + str(soonest_days) + " days") if shields_count > 0 else "None earned yet"}</p>
+                </div>
+            </div>
+        </div>
+        """
+
+        goal_section = f"""
+        <div id="goal-section">
+        {story_block}
+        <p class="section-heading">🎯 Goal Pot</p>
         {pending_block}
         {toast_block}
         {milestone_toast_block}
-        <a href="/pay">Pay</a><br>
-        <a href="/log-cash-expense">Log a cash spend</a><br>
-        <a href="/history">Where did my money go?</a><br>
-        <hr>
-        {streak_block}
-        <a href="/checkin">Check in today</a><br>
-        <a href="/badges">My Badges</a><br>
-        <hr>
-        {coins_line}
-        <a href="/milestones">My Milestones</a><br>
+        {main_goal_card}
+        {debt_card}
+        {cushion_wallet_row}
+        {habits_card}
+        <div class="checkin-heading">
+            <h3>Daily Check-In</h3>
+            <span class="checkin-badge">✓</span>
+        </div>
+        <a class="btn-hero" href="/checkin">Daily Savings</a>
+        </div>
         """
 
-    return f"""
-    Hello, KuberaTeenApp! Your anonymous ID is {session['anon_id']}<br>
-    Current view: <b>{session['view_mode']}</b><br>
-    <hr>
+        # ---- Track & Pay section (used to be its own page, now scrolled to) ----
+        expenses = supabase.table("kubera_expenses").select("*").eq("anon_id", anon_id).order("created_at", desc=True).execute().data
+        totals = {}
+        for e in expenses:
+            totals[e["category"]] = totals.get(e["category"], 0) + e["amount"]
+        bubbles_html = category_bubbles_html(totals)
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        monthly_total = sum(e["amount"] for e in expenses if e["created_at"] >= cutoff)
+
+        monthly_html = ""
+        if monthly_total > 0:
+            compare_items = [
+                (150, "waffle", "waffles"),
+                (350, "movie ticket", "movie tickets"),
+                (2000, "pair of wireless headphones", "pairs of wireless headphones"),
+                (3500, "foldable magnetic charger", "foldable magnetic chargers"),
+                (6000, "pair of PUMA sneakers", "pairs of PUMA sneakers"),
+            ]
+            price, singular, plural = compare_items[0]
+            for item_price, item_singular, item_plural in compare_items:
+                if monthly_total >= item_price:
+                    price, singular, plural = item_price, item_singular, item_plural
+            count = round(monthly_total / price)
+            label = singular if count == 1 else plural
+            monthly_html = f'<p style="text-align:center;color:var(--text-muted);font-size:13px;margin:-6px 0 0">This month: ₹{monthly_total} — about {count} {label}.</p>'
+
+        transactions_html = "".join(txn_row_html(e) for e in expenses[:3])
+        view_all_link = '<p style="text-align:center;margin:12px 0 0"><a href="/transactions">View all transactions</a></p>' if len(expenses) > 3 else ""
+
+        track_section = f"""
+        <div id="track-section">
+        <p class="section-heading">💳 Track &amp; Pay</p>
+        <a class="btn-primary" href="/pay">Pay via Kubera</a>
+        <p></p>
+        <a class="btn-primary" style="background:var(--green)" href="/log-cash-expense">Log Cash Expense</a>
+        <div class="card" style="margin-top:16px">
+            <p class="card-title">Where did my money go?</p>
+            {bubbles_html}
+            {monthly_html}
+        </div>
+        <div class="card">
+            <p class="card-title">Recent transactions</p>
+            <ul class="txn-list">{transactions_html or '<p style="text-align:center;color:var(--text-muted)">None yet.</p>'}</ul>
+            {view_all_link}
+        </div>
+        </div>
+        """
+
+        # ---- Rewards section (used to be its own page, now scrolled to) ----
+        reward_badges_html = badge_treasure_grid_html(badge_rows)
+
+        reward_rows = supabase.table("kubera_milestones").select("*").eq("anon_id", anon_id).order("created_at").execute().data
+        pending_m = [m for m in reward_rows if m["status"] == "pending"]
+        claimed_m = [m for m in reward_rows if m["status"] == "claimed"]
+        verified_m = [m for m in reward_rows if m["status"] == "verified"]
+
+        pending_m_items = "".join(f"""
+        <div class="item-card item-card-gold">
+            <span class="item-card-icon animate-in">🎯</span>
+            <div class="item-card-body">
+                <p class="item-card-title">{m['title']}</p>
+                <p class="item-card-meta item-card-reward">+{m['coin_reward']} coins</p>
+            </div>
+            <label class="item-card-action">
+                <input type="checkbox" class="claim-checkbox" data-id="{m['id']}" data-title="{m['title'].replace('"', '&quot;')}" data-reward="{m['coin_reward']}">
+            </label>
+        </div>
+        """ for m in pending_m) or '<p style="text-align:center;color:var(--text-muted)">None right now.</p>'
+
+        claimed_m_items = "".join(f"""
+        <div class="item-card item-card-blue">
+            <span class="item-card-icon animate-in">⏳</span>
+            <div class="item-card-body">
+                <p class="item-card-title">{m['title']}</p>
+                <p class="item-card-meta">Your note: "{m['note']}"</p>
+            </div>
+        </div>
+        """ for m in claimed_m) or '<p style="text-align:center;color:var(--text-muted)">None.</p>'
+
+        verified_m_items = "".join(f"""
+        <div class="item-card item-card-gold">
+            <span class="item-card-icon animate-in">🏆</span>
+            <div class="item-card-body">
+                <p class="item-card-title">{m['title']}</p>
+                <p class="item-card-meta item-card-reward">+{m['coin_reward']} coins — verified</p>
+            </div>
+        </div>
+        """ for m in verified_m) or '<p style="text-align:center;color:var(--text-muted)">None yet.</p>'
+
+        rewards_section = f"""
+        <div id="rewards-section">
+        <p class="section-heading">🏆 Rewards and Achievements</p>
+        <div class="card card-badges-bg">
+            <p class="card-title">My Badges</p>
+            {reward_badges_html}
+        </div>
+        <div class="card">
+            <p class="card-title">Milestones to be Covered</p>
+            {pending_m_items}
+        </div>
+        <div class="card">
+            <p class="card-title">Waiting on Your Parent</p>
+            {claimed_m_items}
+        </div>
+        <div class="card card-gold">
+            <p class="card-title">Verified Milestones</p>
+            {verified_m_items}
+        </div>
+        </div>
+
+        <div id="claim-overlay" class="nav-overlay"></div>
+        <div id="claim-modal" class="modal">
+            <h3 id="claim-modal-title">Milestone</h3>
+            <p id="claim-modal-reward" class="pill"></p>
+            <form id="claim-modal-form" method="POST" action="">
+                <label>Add a brief note for your parent (e.g. "Scored 92% in pre-boards"):<br>
+                    <input type="text" name="note" id="claim-modal-note" required>
+                </label>
+                <p></p>
+                <button type="submit" class="btn-primary">Submit for Verification</button>
+            </form>
+            <p><a href="#" id="claim-modal-cancel">Cancel</a></p>
+        </div>
+        <script>
+        (function() {{
+            var checkboxes = document.querySelectorAll('.claim-checkbox');
+            var overlay = document.getElementById('claim-overlay');
+            var modal = document.getElementById('claim-modal');
+            var form = document.getElementById('claim-modal-form');
+            var titleEl = document.getElementById('claim-modal-title');
+            var rewardEl = document.getElementById('claim-modal-reward');
+            var cancelLink = document.getElementById('claim-modal-cancel');
+
+            function openModal(id, title, reward) {{
+                titleEl.textContent = title;
+                rewardEl.textContent = reward + ' Kubera Coins';
+                form.action = '/milestones/' + id + '/claim';
+                overlay.classList.add('open');
+                modal.classList.add('open');
+            }}
+            function closeModal() {{
+                overlay.classList.remove('open');
+                modal.classList.remove('open');
+                checkboxes.forEach(function(cb) {{ cb.checked = false; }});
+            }}
+
+            checkboxes.forEach(function(cb) {{
+                cb.addEventListener('change', function() {{
+                    if (cb.checked) {{
+                        openModal(cb.dataset.id, cb.dataset.title, cb.dataset.reward);
+                    }}
+                }});
+            }});
+            overlay.addEventListener('click', closeModal);
+            cancelLink.addEventListener('click', function(e) {{
+                e.preventDefault();
+                closeModal();
+            }});
+        }})();
+        </script>
+        """
+
+        view_block = goal_section + track_section + rewards_section
+
+    body = f"""
+    <p class="pill">{session['view_mode'].title()} view</p>
     {view_block}
-    <hr>
-    <a href="/switch-view/teen">Switch to Teen view</a> |
-    <a href="/switch-view/parent">Switch to Parent view</a>
     """
+    return page(body, active_tab="goal")
+
+@app.route("/transactions")
+def transactions():
+    anon_id = session["anon_id"]
+    expenses = supabase.table("kubera_expenses").select("*").eq("anon_id", anon_id).order("created_at", desc=True).execute().data
+    transactions_html = "".join(txn_row_html(e) for e in expenses)
+
+    return page(f"""
+    <div class="page-header-row">
+        <a class="btn-primary" href="/#track-section">← Back</a>
+        <input type="text" id="txn-search" class="page-header-search" placeholder="Search by payee, category, or amount" autocomplete="off">
+    </div>
+    <div class="card">
+        <ul class="txn-list" id="txn-list">{transactions_html or '<p style="text-align:center;color:var(--text-muted)">None yet.</p>'}</ul>
+        <p id="txn-no-results" style="text-align:center;color:var(--text-muted);display:none">No matching transactions.</p>
+    </div>
+    <script>
+    (function() {{
+        var input = document.getElementById('txn-search');
+        var rows = document.querySelectorAll('#txn-list .txn-row');
+        var noResults = document.getElementById('txn-no-results');
+        input.addEventListener('input', function() {{
+            var q = input.value.trim().toLowerCase();
+            var visibleCount = 0;
+            rows.forEach(function(row) {{
+                var match = row.textContent.toLowerCase().indexOf(q) !== -1;
+                row.style.display = match ? '' : 'none';
+                if (match) visibleCount++;
+            }});
+            noResults.style.display = (q && visibleCount === 0) ? '' : 'none';
+        }});
+    }})();
+    </script>
+    """, active_tab="track", hide_topbar=True)
+
+@app.route("/expenses/today")
+def expenses_today():
+    anon_id = session["anon_id"]
+    supabase.table("kubera_sessions").update({"last_reviewed_at": datetime.now(timezone.utc).isoformat()}).eq("anon_id", anon_id).execute()
+
+    today_start = datetime(today_utc().year, today_utc().month, today_utc().day, tzinfo=timezone.utc).isoformat()
+    expenses = supabase.table("kubera_expenses").select("*").eq("anon_id", anon_id).gte("created_at", today_start).order("created_at", desc=True).execute().data
+    rows_html = "".join(txn_row_html(e) for e in expenses)
+
+    return page(f"""
+    <h2>Today's expenses</h2>
+    <p style="color:var(--text-muted);margin-top:-8px">Anything look miscategorized? Tap Edit to fix it.</p>
+    <div class="card">
+        <ul class="txn-list">{rows_html or '<p style="text-align:center;color:var(--text-muted)">Nothing logged yet today.</p>'}</ul>
+    </div>
+    <p><a class="btn-primary" href="/#track-section">Back</a></p>
+    """, active_tab="track")
+
+@app.route("/expenses/<int:expense_id>/edit", methods=["GET", "POST"])
+def edit_expense(expense_id):
+    anon_id = session["anon_id"]
+    try:
+        expense = supabase.table("kubera_expenses").select("*").eq("id", expense_id).eq("anon_id", anon_id).single().execute().data
+    except Exception:
+        return page("<p>That expense doesn't exist.</p><a class='btn-primary' href='/expenses/today'>Back</a>", active_tab="track")
+
+    if request.method == "POST":
+        category = request.form["category"]
+        supabase.table("kubera_expenses").update({"category": category}).eq("id", expense_id).execute()
+        return redirect("/expenses/today")
+
+    options = "".join(
+        f'<option value="{c}"{" selected" if c == expense["category"] else ""}>{c.title()}</option>'
+        for c in CATEGORIES
+    )
+    payee = expense["payee"] or "Cash expense"
+    return page(f"""
+    <h2>Edit category</h2>
+    <div class="card">
+        <p class="card-title">{payee}</p>
+        <p class="card-value">₹{expense['amount']}</p>
+    </div>
+    <form method="POST">
+        <label>Category<select name="category">{options}</select></label>
+        <button type="submit" class="btn-primary">Save</button>
+    </form>
+    <p><a class="btn-primary" href="/expenses/today">Cancel</a></p>
+    """, active_tab="track")
+
+@app.route("/goal/edit", methods=["GET", "POST"])
+def edit_goal():
+    anon_id = session["anon_id"]
+
+    if request.method == "POST":
+        name = request.form["goal_name"].strip()
+        if name:
+            supabase.table("kubera_coins").update({"goal_name": name}).eq("anon_id", anon_id).execute()
+        return redirect("/")
+
+    coins = supabase.table("kubera_coins").select("goal_name").eq("anon_id", anon_id).single().execute().data
+    return page(f"""
+    <h2>What are you saving for?</h2>
+    <form method="POST">
+        <label>Goal name: <input type="text" name="goal_name" value="{coins['goal_name']}" required></label><br>
+        <button type="submit" class="btn-primary">Save</button>
+    </form>
+    <p><a href="/">Cancel</a></p>
+    """, active_tab="goal")
 
 @app.route("/pay")
 def pay():
-    links = "".join(f'<li><a href="/pay/{p}">{p}</a></li>' for p in PAYEES)
-    return f"""
+    rows = "".join(f"""
+    <a href="/pay/{p}" class="payee-row">
+        {payee_avatar_html(p, 56)}
+        <div class="payee-row-body">
+            <p class="payee-row-name">{p}</p>
+            <p class="payee-row-tag">{(PAYEE_CATEGORY.get(p) or "pick category after").title()}</p>
+        </div>
+        <span class="payee-row-chevron">›</span>
+    </a>
+    """ for p in PAYEES)
+    return page(f"""
     <h2>Pay with Kubera</h2>
     <p>Choose where you're paying:</p>
-    <ul>{links}</ul>
-    """
-
-@app.route("/parent/requests")
-def parent_requests():
-    anon_id = session["anon_id"]
-    wallet = supabase.table("kubera_wallets").select("balance").eq("anon_id", anon_id).single().execute()
-    balance = wallet.data["balance"]
-
-    all_reqs = supabase.table("kubera_approval_requests").select("*").eq("anon_id", anon_id).order("created_at", desc=True).execute().data
-
-    pending = [r for r in all_reqs if r["status"] == "pending"]
-    approved = [r for r in all_reqs if r["status"] == "approved"]
-    declined = [r for r in all_reqs if r["status"] == "declined"]
-
-    pending_items = "".join(f"""
-        <li>"Can I spend ₹{r['amount']} at {r['payee'] or 'cash'} for {r['category']}?"
-            <form method="POST" action="/parent/requests/{r['id']}/approve" style="display:inline">
-                <button type="submit">Approve</button>
-            </form>
-            <form method="POST" action="/parent/requests/{r['id']}/decline" style="display:inline">
-                <button type="submit">Decline</button>
-            </form>
-        </li>
-        """ for r in pending)
-
-    approved_items = "".join(f"<li>₹{r['amount']} at {r['payee'] or 'cash'} — {r['category']}</li>" for r in approved)
-    declined_items = "".join(f"<li>₹{r['amount']} at {r['payee'] or 'cash'} — {r['category']}</li>" for r in declined)
-
-    return f"""
-    <h2>Pending approval requests</h2>
-    <p>Wallet balance: ₹{balance} left.</p>
-    <ul>{pending_items or "<li>Nothing pending right now.</li>"}</ul>
-    <h3>Approved</h3>
-    <ul>{approved_items or "<li>None yet.</li>"}</ul>
-    <h3>Declined</h3>
-    <ul>{declined_items or "<li>None yet.</li>"}</ul>
-    <a href="/">Back home</a>
-    """
+    <div class="payee-list">{rows}</div>
+    """, active_tab="track")
 
 @app.route("/parent/requests/<int:req_id>/<action>", methods=["POST"])
 def parent_request_action(req_id, action):
@@ -254,18 +1667,18 @@ def parent_request_action(req_id, action):
     req = supabase.table("kubera_approval_requests").select("*").eq("id", req_id).eq("anon_id", anon_id).single().execute().data
 
     if req["status"] != "pending":
-        return "<p>This request was already handled.</p><a href='/parent/requests'>Back</a>"
+        return page("<p>This request was already handled.</p><a class='btn-primary' href='/#requests-section'>Back</a>")
 
     if action == "decline":
         supabase.table("kubera_approval_requests").update({"status": "declined"}).eq("id", req_id).execute()
-        return "<p>Request declined.</p><a href='/parent/requests'>Back</a>"
+        return page("<p>Request declined.</p><a class='btn-primary' href='/#requests-section'>Back</a>")
 
     if action == "approve":
         wallet = supabase.table("kubera_wallets").select("balance").eq("anon_id", anon_id).single().execute()
         balance = wallet.data["balance"]
 
         if req["amount"] > balance:
-            return f"<p>Can't approve — teen only has ₹{balance} left, request was for ₹{req['amount']}.</p><a href='/parent/requests'>Back</a>"
+            return page(f"<p>Can't approve — teen only has ₹{balance} left, request was for ₹{req['amount']}.</p><a class='btn-primary' href='/#requests-section'>Back</a>")
 
         supabase.table("kubera_expenses").insert({
             "anon_id": anon_id,
@@ -277,66 +1690,60 @@ def parent_request_action(req_id, action):
         supabase.table("kubera_wallets").update({"balance": balance - req["amount"]}).eq("anon_id", anon_id).execute()
         supabase.table("kubera_approval_requests").update({"status": "approved"}).eq("id", req_id).execute()
 
-        return "<p>Approved — expense logged, wallet updated.</p><a href='/parent/requests'>Back</a>"
+        return page("<p>Approved — expense logged, wallet updated.</p><a class='btn-primary' href='/#requests-section'>Back</a>")
 
-    return "<p>Unknown action.</p><a href='/parent/requests'>Back</a>"
+    return page("<p>Unknown action.</p><a class='btn-primary' href='/#requests-section'>Back</a>")
 
-@app.route("/parent/milestones", methods=["GET", "POST"])
-def parent_milestones():
+@app.route("/parent/wallet/refill", methods=["GET", "POST"])
+def refill_wallet():
     anon_id = session["anon_id"]
+    wallet = supabase.table("kubera_wallets").select("balance").eq("anon_id", anon_id).single().execute().data
 
     if request.method == "POST":
-        title = request.form["title"]
-        coin_reward = int(request.form["coin_reward"])
-        supabase.table("kubera_milestones").insert({
-            "anon_id": anon_id,
-            "title": title,
-            "coin_reward": coin_reward,
-        }).execute()
-        return redirect("/parent/milestones")
+        amount = int(request.form["amount"])
+        if amount > 0:
+            supabase.table("kubera_wallets").update({"balance": wallet["balance"] + amount}).eq("anon_id", anon_id).execute()
+        return redirect("/#overview-section")
 
-    rows = supabase.table("kubera_milestones").select("*").eq("anon_id", anon_id).order("created_at").execute().data
-    pending = [m for m in rows if m["status"] == "pending"]
-    claimed = [m for m in rows if m["status"] == "claimed"]
-    verified = [m for m in rows if m["status"] == "verified"]
+    return page(f"""
+    <div class="pay-confirm-card">
+        {glossy_icon_html("🔄", "blue")}
+        <h2 class="pay-confirm-name">Refill Wallet</h2>
+        <p style="color:var(--text-muted);margin:-8px 0 16px;text-align:center">Current balance: ₹{wallet['balance']}. Add money for your teen to spend.</p>
+        <form method="POST" class="pay-confirm-form">
+            <label class="pay-amount-label">Amount
+                <div class="pay-amount-field">
+                    <span class="pay-amount-currency">₹</span>
+                    <input type="number" name="amount" min="1" required autofocus>
+                </div>
+            </label>
+            <button type="submit" class="btn-primary">Add to Wallet</button>
+        </form>
+    </div>
+    """)
 
-    pending_items = "".join(f"<li>{m['title']} — {m['coin_reward']} coins (not claimed by your teen yet)</li>" for m in pending)
-
-    claimed_items = "".join(f"""
-        <li>{m['title']} — {m['coin_reward']} coins<br>
-            Your teen says: "{m['note']}"
-            <form method="POST" action="/parent/milestones/{m['id']}/verify" style="display:inline">
-                <button type="submit">Verify</button>
-            </form>
-        </li>
-        """ for m in claimed)
-
-    verified_items = "".join(f"<li>{m['title']} — {m['coin_reward']} coins (verified {m['verified_at']})</li>" for m in verified)
-
-    return f"""
-    <h2>Milestones</h2>
-    <h3>Waiting on your teen</h3>
-    <ul>{pending_items or "<li>None.</li>"}</ul>
-    <h3>Ready to verify</h3>
-    <ul>{claimed_items or "<li>None.</li>"}</ul>
-    <h3>Verified</h3>
-    <ul>{verified_items or "<li>None yet.</li>"}</ul>
-    <h3>Add a new milestone</h3>
-    <form method="POST">
-        <label>Title: <input type="text" name="title" required></label><br>
-        <label>Coin reward: <input type="number" name="coin_reward" min="1" required></label><br>
-        <button type="submit">Add milestone</button>
-    </form>
-    <a href="/">Back home</a>
-    """
+@app.route("/parent/milestones", methods=["POST"])
+def parent_milestones():
+    anon_id = session["anon_id"]
+    title = request.form["title"]
+    coin_reward = int(request.form["coin_reward"])
+    supabase.table("kubera_milestones").insert({
+        "anon_id": anon_id,
+        "title": title,
+        "coin_reward": coin_reward,
+    }).execute()
+    return redirect("/#milestones-section")
 
 @app.route("/parent/milestones/<milestone_id>/verify", methods=["POST"])
 def verify_milestone(milestone_id):
     anon_id = session["anon_id"]
-    m = supabase.table("kubera_milestones").select("*").eq("id", milestone_id).eq("anon_id", anon_id).single().execute().data
+    try:
+        m = supabase.table("kubera_milestones").select("*").eq("id", milestone_id).eq("anon_id", anon_id).single().execute().data
+    except Exception:
+        return page("<p>That milestone doesn't exist.</p><a class='btn-primary' href='/#milestones-section'>Back</a>")
 
     if m["status"] != "claimed":
-        return "<p>This milestone hasn't been claimed by your teen yet.</p><a href='/parent/milestones'>Back</a>"
+        return page("<p>This milestone hasn't been claimed by your teen yet.</p><a class='btn-primary' href='/#milestones-section'>Back</a>")
 
     supabase.table("kubera_milestones").update({
         "status": "verified",
@@ -344,54 +1751,57 @@ def verify_milestone(milestone_id):
     }).eq("id", milestone_id).execute()
 
     award_coins(anon_id, m["coin_reward"])
+    supabase.table("kubera_badges").insert({"anon_id": anon_id, "badge_type": f"trophy_{m['coin_reward']}"}).execute()
 
-    return f"<p>Verified! +{m['coin_reward']} Kubera Coins.</p><a href='/parent/milestones'>Back</a>"
+    achv_cards = [{"icon": "🏆", "title": m["title"], "amount": m["coin_reward"], "extra": ""}]
+    achv_script = f"<script>showAchievements({json.dumps(achv_cards)});</script>"
+    return page(f"<p>Verified! +{m['coin_reward']} Kubera Coins.</p><a class='btn-primary' href='/#milestones-section'>Back</a>{achv_script}")
+
+@app.route("/parent/milestones/<milestone_id>/reject", methods=["POST"])
+def reject_milestone(milestone_id):
+    anon_id = session["anon_id"]
+    try:
+        m = supabase.table("kubera_milestones").select("*").eq("id", milestone_id).eq("anon_id", anon_id).single().execute().data
+    except Exception:
+        return page("<p>That milestone doesn't exist.</p><a class='btn-primary' href='/#milestones-section'>Back</a>")
+
+    if m["status"] != "claimed":
+        return page("<p>This milestone hasn't been claimed by your teen yet.</p><a class='btn-primary' href='/#milestones-section'>Back</a>")
+
+    supabase.table("kubera_milestones").update({"status": "pending"}).eq("id", milestone_id).execute()
+
+    return redirect("/#milestones-section")
 
 @app.route("/milestones")
 def milestones():
-    anon_id = session["anon_id"]
-    rows = supabase.table("kubera_milestones").select("*").eq("anon_id", anon_id).order("created_at").execute().data
-
-    pending = [m for m in rows if m["status"] == "pending"]
-    claimed = [m for m in rows if m["status"] == "claimed"]
-    verified = [m for m in rows if m["status"] == "verified"]
-
-    pending_items = "".join(f"""
-        <li>{m['title']} — {m['coin_reward']} coins
-            <a href="/milestones/{m['id']}/claim">I did this</a>
-        </li>
-        """ for m in pending)
-
-    claimed_items = "".join(f"<li>{m['title']} — waiting on your parent to verify. Your note: \"{m['note']}\"</li>" for m in claimed)
-    verified_items = "".join(f"<li>{m['title']} — {m['coin_reward']} coins (verified!)</li>" for m in verified)
-
-    return f"""
-    <h2>My Milestones</h2>
-    <h3>Not done yet</h3>
-    <ul>{pending_items or "<li>None right now.</li>"}</ul>
-    <h3>Waiting for parent to verify</h3>
-    <ul>{claimed_items or "<li>None.</li>"}</ul>
-    <h3>Verified</h3>
-    <ul>{verified_items or "<li>None yet.</li>"}</ul>
-    <a href="/">Back home</a>
-    """
+    # Legacy standalone page — no longer linked from anywhere in the normal
+    # flow since Milestones got folded into the one-page scroll (teen:
+    # #rewards-section, parent: #milestones-section). Rather than hand-polish
+    # a second, parallel bare template that would just drift out of sync
+    # with the real one, redirect straight to the already-built, already-
+    # verified section so a stray direct link lands somewhere polished.
+    anchor = "#milestones-section" if session["view_mode"] == "parent" else "#rewards-section"
+    return redirect("/" + anchor)
 
 @app.route("/milestones/<milestone_id>/claim", methods=["GET", "POST"])
 def claim_milestone(milestone_id):
     anon_id = session["anon_id"]
-    m = supabase.table("kubera_milestones").select("*").eq("id", milestone_id).eq("anon_id", anon_id).single().execute().data
+    try:
+        m = supabase.table("kubera_milestones").select("*").eq("id", milestone_id).eq("anon_id", anon_id).single().execute().data
+    except Exception:
+        return page("<p>That milestone doesn't exist.</p><a class='btn-primary' href='/#rewards-section'>Back</a>", active_tab="rewards")
 
     if m["status"] != "pending":
-        return "<p>This milestone isn't waiting to be claimed.</p><a href='/milestones'>Back</a>"
+        return page("<p>This milestone isn't waiting to be claimed.</p><a class='btn-primary' href='/#rewards-section'>Back</a>", active_tab="rewards")
 
     if request.method == "GET":
-        return f"""
+        return page(f"""
         <h2>{m['title']}</h2>
         <form method="POST">
             <label>Tell your parent what you did: <input type="text" name="note" required></label><br>
-            <button type="submit">Submit</button>
+            <button type="submit" class="btn-primary">Submit</button>
         </form>
-        """
+        """, active_tab="rewards")
 
     note = request.form["note"]
     supabase.table("kubera_milestones").update({
@@ -399,7 +1809,7 @@ def claim_milestone(milestone_id):
         "note": note,
     }).eq("id", milestone_id).execute()
 
-    return "<p>Sent to your parent!</p><a href='/milestones'>Back</a>"
+    return page("<p>Sent to your parent!</p><a class='btn-primary' href='/#rewards-section'>Back</a>", active_tab="rewards")
 
 @app.route("/pay/<payee>", methods=["GET", "POST"])
 def pay_payee(payee):
@@ -412,7 +1822,7 @@ def pay_payee(payee):
         threshold = wallet.data["approval_threshold"]
 
         if amount > balance:
-            return f"<p>You only have ₹{balance} left — you can't pay ₹{amount}.</p><a href='/pay/{payee}'>Go back</a>"
+            return page(f"<p>You only have ₹{balance} left — you can't pay ₹{amount}.</p><a class='btn-primary' href='/pay/{payee}'>Go back</a>", active_tab="track")
 
         if amount > threshold:
             supabase.table("kubera_approval_requests").insert({
@@ -421,7 +1831,7 @@ def pay_payee(payee):
                 "category": category,
                 "amount": amount,
             }).execute()
-            return f"<p>₹{amount} to {payee} is over your ₹{threshold} limit — sent to your parent for approval.</p><a href='/'>Back home</a>"
+            return page(f"<p>₹{amount} to {payee} is over your ₹{threshold} limit — sent to your parent for approval.</p><a class='btn-primary' href='/'>Back home</a>", active_tab="track")
 
         supabase.table("kubera_expenses").insert({
             "anon_id": session["anon_id"],
@@ -436,19 +1846,35 @@ def pay_payee(payee):
 
     suggested = PAYEE_CATEGORY.get(payee)
     if suggested:
-        category_field = f'<input type="hidden" name="category" value="{suggested}"><p>Category: {suggested} (auto-suggested)</p>'
+        icon = CATEGORY_ICONS.get(suggested, "💸")
+        highlight, dark, glow = CATEGORY_GLOSS[suggested]
+        base = CATEGORY_COLORS[suggested]
+        category_field = f"""
+        <input type="hidden" name="category" value="{suggested}">
+        <div class="pay-category-pill" style="background:{highlight};color:{dark}">
+            {icon} {suggested.title()} <span class="pay-category-pill-tag">auto-detected</span>
+        </div>
+        """
     else:
-        options = "".join(f'<option value="{c}">{c}</option>' for c in CATEGORIES)
-        category_field = f'<label>Category: <select name="category">{options}</select></label>'
+        options = "".join(f'<option value="{c}">{c.title()}</option>' for c in CATEGORIES)
+        category_field = f'<label>Category<select name="category">{options}</select></label>'
 
-    return f"""
-    <h2>Pay {payee}</h2>
-    <form method="POST">
-        <label>Amount: ₹<input type="number" name="amount" min="1" required></label><br>
-        {category_field}<br>
-        <button type="submit">Pay</button>
-    </form>
-    """
+    return page(f"""
+    <div class="pay-confirm-card">
+        {payee_avatar_html(payee, 76)}
+        <h2 class="pay-confirm-name">{payee}</h2>
+        <form method="POST" class="pay-confirm-form">
+            <label class="pay-amount-label">Amount
+                <div class="pay-amount-field">
+                    <span class="pay-amount-currency">₹</span>
+                    <input type="number" name="amount" min="1" required autofocus>
+                </div>
+            </label>
+            {category_field}
+            <button type="submit" class="btn-primary">Pay {payee}</button>
+        </form>
+    </div>
+    """, active_tab="track")
 
 @app.route("/log-cash-expense", methods=["GET", "POST"])
 def log_cash_expense():
@@ -465,66 +1891,24 @@ def log_cash_expense():
 
         return redirect("/")
 
-    options = "".join(f'<option value="{c}">{c}</option>' for c in CATEGORIES)
-    return f"""
-    <h2>Log a cash spend</h2>
-    <p>Spent cash that didn't go through the Pay button? Log it here — this won't touch your wallet balance.</p>
-    <form method="POST">
-        <label>Amount: ₹<input type="number" name="amount" min="1" required></label><br>
-        <label>Category: <select name="category">{options}</select></label><br>
-        <button type="submit">Log it</button>
-    </form>
-    """
-
-@app.route("/history")
-def history():
-    expenses = supabase.table("kubera_expenses").select("*").eq("anon_id", session["anon_id"]).order("created_at", desc=True).execute()
-    rows = expenses.data
-
-    totals = {}
-    for e in rows:
-        totals[e["category"]] = totals.get(e["category"], 0) + e["amount"]
-
-    totals_html = "".join(f"<li>{cat}: ₹{amt}</li>" for cat, amt in totals.items())
-
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-    monthly_total = sum(e["amount"] for e in rows if e["created_at"] >= cutoff)
-
-    monthly_html = ""
-    if monthly_total > 0:
-        items = [
-            (150, "waffle", "waffles"),
-            (350, "movie ticket", "movie tickets"),
-            (2000, "pair of wireless headphones", "pairs of wireless headphones"),
-            (3500, "foldable magnetic charger", "foldable magnetic chargers"),
-            (6000, "pair of PUMA sneakers", "pairs of PUMA sneakers"),
-        ]
-        price, singular, plural = items[0]
-        for item_price, item_singular, item_plural in items:
-            if monthly_total >= item_price:
-                price, singular, plural = item_price, item_singular, item_plural
-
-        count = round(monthly_total / price)
-        label = singular if count == 1 else plural
-        monthly_html = f"<p>This month you spent ₹{monthly_total} — about {count} {label}.</p>"
-
-    transactions_html = "".join(
-        f"<tr><td>{e['created_at']}</td><td>{e['payee'] or '(cash)'}</td><td>{e['category']}</td><td>₹{e['amount']}</td></tr>"
-        for e in rows
-    )
-
-    return f"""
-    <h2>Where did my money go?</h2>
-    <h3>By category</h3>
-    <ul>{totals_html}</ul>
-    {monthly_html}
-    <h3>Every transaction</h3>
-    <table border="1" cellpadding="5">
-    <tr><th>When</th><th>Payee</th><th>Category</th><th>Amount</th></tr>
-    {transactions_html}
-    </table>
-    <br><a href="/">Back home</a>
-    """
+    options = "".join(f'<option value="{c}">{c.title()}</option>' for c in CATEGORIES)
+    return page(f"""
+    <div class="pay-confirm-card">
+        {glossy_icon_html("🧾", "green")}
+        <h2 class="pay-confirm-name">Log a Cash Spend</h2>
+        <p style="color:var(--text-muted);margin:-8px 0 16px;text-align:center">Spent cash that didn't go through the Pay button? Log it here — this won't touch your wallet balance.</p>
+        <form method="POST" class="pay-confirm-form">
+            <label class="pay-amount-label">Amount
+                <div class="pay-amount-field">
+                    <span class="pay-amount-currency">₹</span>
+                    <input type="number" name="amount" min="1" required autofocus>
+                </div>
+            </label>
+            <label>Category<select name="category">{options}</select></label>
+            <button type="submit" class="btn-primary">Log It</button>
+        </form>
+    </div>
+    """, active_tab="track")
 
 @app.route("/checkin", methods=["GET", "POST"])
 def checkin():
@@ -534,27 +1918,45 @@ def checkin():
 
     if request.method == "GET":
         if streak["debt_remaining"] > 0:
-            prompt = f"You're in Refill Mode, owing ₹{streak['debt_remaining']}. Deposit to pay it down (min ₹10):"
+            heading = "Refill Mode"
+            prompt = f"You're in Refill Mode, owing ₹{streak['debt_remaining']}. Deposit to pay it down (min ₹10)."
+            icon, accent = "🛡️", "red"
         else:
-            prompt = f"Day {streak['streak_count']} streak. Enter today's deposit (min ₹10):"
-        return f"""
-        <h2>Check in</h2>
-        <p>{prompt}</p>
-        <form method="POST">
-            <label>Amount: ₹<input type="number" name="amount" min="10" value="10" required></label><br>
-            <button type="submit">Check in</button>
-        </form>
-        """
+            heading = "Daily Check-In"
+            prompt = f"Day {streak['streak_count']} streak. Keep it going — minimum ₹10 today."
+            icon, accent = "🔥", "blue"
+        return page(f"""
+        <div class="pay-confirm-card">
+            {glossy_icon_html(icon, accent)}
+            <h2 class="pay-confirm-name">{heading}</h2>
+            <p style="color:var(--text-muted);margin:-8px 0 16px;text-align:center">{prompt}</p>
+            <form method="POST" class="pay-confirm-form">
+                <label class="pay-amount-label">Amount
+                    <div class="pay-amount-field">
+                        <span class="pay-amount-currency">₹</span>
+                        <input type="number" name="amount" min="10" value="10" required autofocus>
+                    </div>
+                </label>
+                <button type="submit" class="btn-primary">Save</button>
+            </form>
+        </div>
+        """, active_tab="goal")
 
     last_checkin = parse_date(streak["last_checkin"])
     if last_checkin == today:
-        return "<p>You already checked in today — come back tomorrow!</p><a href='/'>Back home</a>"
+        return page("<p>You already checked in today — come back tomorrow!</p><a class='btn-primary' href='/'>Back home</a>", active_tab="goal")
 
     amount = int(request.form["amount"])
     if amount < 10:
-        return "<p>Minimum deposit is ₹10.</p><a href='/checkin'>Go back</a>"
+        return page("<p>Minimum deposit is ₹10.</p><a class='btn-primary' href='/checkin'>Go back</a>", active_tab="goal")
+
+    wallet = supabase.table("kubera_wallets").select("balance").eq("anon_id", anon_id).single().execute()
+    wallet_balance = wallet.data["balance"]
+    if amount > wallet_balance:
+        return page(f"<p>You only have ₹{wallet_balance} in your wallet — you can't save more than that today.</p><a class='btn-primary' href='/checkin'>Go back</a>", active_tab="goal")
 
     messages = []
+    achievements = []
     debt = streak["debt_remaining"]
 
     if debt > 0:
@@ -567,6 +1969,8 @@ def checkin():
             if leftover > 0:
                 messages.append(f"Debt cleared! ₹{leftover} added to your savings. Refill Mode ended — streak resumes tomorrow.")
                 messages += award_milestones(anon_id, old_cushion, new_cushion)
+                for t in crossed_milestones(old_cushion, new_cushion):
+                    achievements.append({"icon": "💰", "title": f"₹{t} SAVED!", "amount": 2000, "extra": ""})
             else:
                 messages.append("Debt cleared! Refill Mode ended — streak resumes tomorrow.")
         else:
@@ -616,16 +2020,27 @@ def checkin():
             supabase.table("kubera_badges").insert({"anon_id": anon_id, "badge_type": f"weekly_{new_streak}"}).execute()
             award_coins(anon_id, 1000)
             messages.append(f"New badge: Day {new_streak} streak! +1,000 Kubera Coins.")
+            shield_extra = ""
             if len(available_shields(anon_id, today)) < 2:
                 supabase.table("kubera_shields").insert({"anon_id": anon_id}).execute()
                 messages.append("You earned a Shield!")
+                shield_extra = "+1 Shield"
+            achievements.append({"icon": "🔥", "title": f"{new_streak} DAYS STREAK!", "amount": 1000, "extra": shield_extra})
 
         messages += award_milestones(anon_id, old_cushion, new_cushion)
+        for t in crossed_milestones(old_cushion, new_cushion):
+            achievements.append({"icon": "💰", "title": f"₹{t} SAVED!", "amount": 2000, "extra": ""})
 
         if not messages:
             messages.append(f"Checked in! +₹{amount} saved.")
 
-    return f"<p>{'<br>'.join(messages)}</p><a href='/'>Back home</a>"
+    # Whatever amount was deposited today — whether it grew the cushion or
+    # paid down Refill Mode debt — is money the teen chose not to spend, so
+    # it comes out of the Wallet either way, same as a real savings transfer.
+    supabase.table("kubera_wallets").update({"balance": wallet_balance - amount}).eq("anon_id", anon_id).execute()
+
+    achv_script = f"<script>showAchievements({json.dumps(achievements)});</script>" if achievements else ""
+    return page(f"<p>{'<br>'.join(messages)}</p><a class='btn-primary' href='/'>Back home</a>{achv_script}", active_tab="goal")
 
 @app.route("/cushion/spend", methods=["GET", "POST"])
 def cushion_spend():
@@ -633,38 +2048,50 @@ def cushion_spend():
     streak = supabase.table("kubera_streaks").select("*").eq("anon_id", anon_id).single().execute().data
 
     if streak["debt_remaining"] > 0:
-        return f"<p>You're still paying off a previous emergency spend (₹{streak['debt_remaining']} left) — clear that first.</p><a href='/'>Back home</a>"
+        return page(f"<p>You're still paying off a previous emergency spend (₹{streak['debt_remaining']} left) — clear that first.</p><a class='btn-primary' href='/'>Back home</a>", active_tab="goal")
 
     if request.method == "GET":
-        return """
-        <h2>Emergency spend from cushion</h2>
-        <form method="POST">
-            <label>Amount: ₹<input type="number" name="amount" min="1" required></label><br>
-            <button type="submit">See impact</button>
-        </form>
-        """
+        return page(f"""
+        <div class="pay-confirm-card">
+            {glossy_icon_html("💸", "green")}
+            <h2 class="pay-confirm-name">Emergency Spend</h2>
+            <p style="color:var(--text-muted);margin:-8px 0 16px;text-align:center">Withdraw from your Cushion for something urgent. We'll show you the impact before anything moves.</p>
+            <form method="POST" class="pay-confirm-form">
+                <label class="pay-amount-label">Amount
+                    <div class="pay-amount-field">
+                        <span class="pay-amount-currency">₹</span>
+                        <input type="number" name="amount" min="1" required autofocus>
+                    </div>
+                </label>
+                <button type="submit" class="btn-primary">See Impact</button>
+            </form>
+        </div>
+        """, active_tab="goal")
 
     amount = int(request.form["amount"])
 
     if request.form.get("confirmed") != "yes":
         if amount < 1 or amount > streak["cushion_balance"]:
-            return f"<p>You only have ₹{streak['cushion_balance']} saved — you can't withdraw ₹{amount}.</p><a href='/cushion/spend'>Go back</a>"
+            return page(f"<p>You only have ₹{streak['cushion_balance']} saved — you can't withdraw ₹{amount}.</p><a class='btn-primary' href='/cushion/spend'>Go back</a>", active_tab="goal")
 
         debt = compute_debt(amount)
         days = debt // 10
-        return f"""
-        <h2>Are you sure?</h2>
-        <p>Withdrawing ₹{amount} pushes your goal back {days} days.</p>
-        <form method="POST">
-            <input type="hidden" name="amount" value="{amount}">
-            <input type="hidden" name="confirmed" value="yes">
-            <button type="submit">Confirm withdrawal</button>
-        </form>
-        <a href="/cushion/spend">Cancel</a>
-        """
+        return page(f"""
+        <div class="pay-confirm-card">
+            {glossy_icon_html("⚠️", "red")}
+            <h2 class="pay-confirm-name">Are You Sure?</h2>
+            <p style="color:var(--text-muted);margin:-8px 0 16px;text-align:center">Withdrawing ₹{amount} pushes your goal back {days} days.</p>
+            <form method="POST" class="pay-confirm-form">
+                <input type="hidden" name="amount" value="{amount}">
+                <input type="hidden" name="confirmed" value="yes">
+                <button type="submit" class="btn-primary">Confirm Withdrawal</button>
+            </form>
+            <p style="margin-top:12px"><a href="/cushion/spend" style="color:var(--text-muted);font-size:14px">Cancel</a></p>
+        </div>
+        """, active_tab="goal")
 
     if amount < 1 or amount > streak["cushion_balance"]:
-        return f"<p>You only have ₹{streak['cushion_balance']} saved — you can't withdraw ₹{amount}.</p><a href='/'>Back home</a>"
+        return page(f"<p>You only have ₹{streak['cushion_balance']} saved — you can't withdraw ₹{amount}.</p><a class='btn-primary' href='/'>Back home</a>", active_tab="goal")
 
     debt = compute_debt(amount)
     new_cushion = streak["cushion_balance"] - amount
@@ -674,17 +2101,27 @@ def cushion_spend():
         "debt_remaining": debt,
     }).eq("anon_id", anon_id).execute()
 
-    return f"<p>₹{amount} withdrawn. You're now in Refill Mode — ₹{debt} debt, streak paused.</p><a href='/'>Back home</a>"
+    return page(f"<p>₹{amount} withdrawn. You're now in Refill Mode — ₹{debt} debt, streak paused.</p><a class='btn-primary' href='/'>Back home</a>", active_tab="goal")
 
 @app.route("/badges")
 def badges():
-    rows = supabase.table("kubera_badges").select("*").eq("anon_id", session["anon_id"]).order("earned_date").execute().data
-    items = "".join(f"<li>{b['badge_type']} — earned {b['earned_date']}</li>" for b in rows)
-    return f"""
-    <h2>My Badges</h2>
-    <ul>{items}</ul>
-    <a href="/">Back home</a>
-    """
+    # Legacy standalone page, same reasoning as the /milestones redirect
+    # above — redirect to the already-polished badge grid instead of
+    # maintaining a second, bare copy of it.
+    anchor = "#overview-section" if session["view_mode"] == "parent" else "#rewards-section"
+    return redirect("/" + anchor)
+
+@app.route("/stories/kubera/seen", methods=["POST"])
+def mark_kubera_story_seen():
+    anon_id = session["anon_id"]
+    supabase.table("kubera_sessions").update({"kubera_intro_seen_date": today_utc().isoformat()}).eq("anon_id", anon_id).execute()
+    return ("", 204)
+
+@app.route("/stories/badge/<badge_id>/seen", methods=["POST"])
+def mark_badge_story_seen(badge_id):
+    anon_id = session["anon_id"]
+    supabase.table("kubera_badges").update({"seen_by_teen": True}).eq("id", badge_id).eq("anon_id", anon_id).execute()
+    return ("", 204)
 
 @app.route("/switch-view/<mode>")
 def switch_view(mode):
@@ -694,4 +2131,3 @@ def switch_view(mode):
 
 if __name__ == "__main__":
     app.run(debug=True)
-
