@@ -17,6 +17,32 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=365)
 
 supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
+# Every supabase.table(...)....execute() call anywhere in this file (79
+# call sites at last count) shares this one underlying httpx.Client.
+# postgrest-py's own retry logic only covers Cloudflare 503/520 HTTP
+# responses — a real connection-level hiccup (DNS blip, dropped
+# connection, the kind of thing a serverless cold start sees) raises an
+# httpx exception instead of returning a response, which was going
+# straight through as an unhandled 500 on whichever route happened to
+# hit it. Patching the shared client's .request() once here covers every
+# call site automatically, instead of needing a retry wrapper at each of
+# the 79 individual .execute() calls (which is also what the Internal
+# Server Error judges could hit mid-demo turned out to be, once traced:
+# an intermittent network-level failure on an otherwise-healthy account,
+# not the stale-session bug the first two fixes targeted).
+import httpx as _httpx
+_orig_request = supabase.postgrest.session.request
+def _request_with_retry(method, url, **kwargs):
+    last_exc = None
+    for attempt in range(3):
+        try:
+            return _orig_request(method, url, **kwargs)
+        except _httpx.TransportError as e:
+            last_exc = e
+            time.sleep(0.25)
+    raise last_exc
+supabase.postgrest.session.request = _request_with_retry
+
 def with_retries(fn, attempts=3, delay=0.25):
     # Supabase/Vercel occasionally hiccups on a single network round trip
     # (cold start, transient DNS/connection blip) — on a request that
