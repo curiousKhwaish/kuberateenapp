@@ -1319,17 +1319,17 @@ def home():
 
         cushion_wallet_row = f"""
         <div class="hero-row">
-            <div class="hero-card hero-green">
-                <p class="hero-title">Savings</p>
-                <p class="hero-sub">(Real Money)</p>
-                <p class="hero-value">₹{streak['cushion_balance']}</p>
-                <a class="hero-link" href="/cushion/spend">💸 Withdraw</a>
-            </div>
             <div class="hero-card hero-indigo">
                 <p class="hero-title">Wallet</p>
                 <p class="hero-sub">(Spendable)</p>
                 <p class="hero-value">₹{balance}</p>
                 <a class="hero-link" href="#track-section">View activity</a>
+            </div>
+            <div class="hero-card hero-green">
+                <p class="hero-title">Savings</p>
+                <p class="hero-sub">(Real Money)</p>
+                <p class="hero-value">₹{streak['cushion_balance']}</p>
+                <a class="hero-link" href="/cushion/spend">💸 Withdraw</a>
             </div>
         </div>
         """
@@ -1374,9 +1374,9 @@ def home():
         {pending_block}
         {toast_block}
         {milestone_toast_block}
-        {main_goal_card}
         {debt_card}
         {cushion_wallet_row}
+        {main_goal_card}
         {habits_card}
         <div class="checkin-heading">
             <h3>Daily Check-In</h3>
