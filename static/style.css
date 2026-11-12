@@ -1390,6 +1390,7 @@ form select {
 .hero-row {
   display: flex;
   gap: 12px;
+  margin-bottom: 16px;
 }
 
 .hero-row .hero-card {
