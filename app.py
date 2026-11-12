@@ -12,6 +12,7 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = "replace-this-with-a-real-random-secret-later"
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=365)
 
 supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
@@ -22,26 +23,42 @@ def ensure_anon_session():
     # crash with KeyError: 'anon_id', since only home() ever created one.
     if request.endpoint == "static":
         return
+    # Without this, Flask writes the session cookie with no Max-Age, so
+    # browsers treat it as a tab/browser-session-only cookie — gone the
+    # next time the browser (or a backgrounded mobile tab) restarts,
+    # silently handing out a brand-new anon_id and a fresh demo reseed.
+    # That's the "my transactions and milestones disappeared" bug: the
+    # old anon_id's rows were never deleted, they just became unreachable
+    # once the cookie pointing to them was gone.
+    session.permanent = True
     anon_id = session.get("anon_id")
-    needs_seed = False
     if anon_id is None:
         anon_id = str(uuid.uuid4())
         session["anon_id"] = anon_id
-        needs_seed = True
-    else:
-        # The browser's cookie can outlive the account it points to (e.g.
-        # after a database cleanup like 2026-11-09's) — self-heal by
-        # reseeding under the same anon_id instead of crashing with a
-        # Postgres "0 rows" error on the first query that assumes the row
-        # exists. Same reasoning as the original anon_id-missing fix, one
-        # layer deeper: a session can be present but no longer real.
-        existing = supabase.table("kubera_sessions").select("anon_id").eq("anon_id", anon_id).execute().data
-        needs_seed = not existing
-    if needs_seed:
+
+    # The browser's cookie can outlive the account it points to (e.g.
+    # after a database cleanup like 2026-11-09's), or seed_demo_account()
+    # below can fail partway through (a transient Supabase hiccup leaves
+    # e.g. the wallet row inserted but coins/streak missing) — either way,
+    # self-heal by backfilling instead of crashing with a Postgres
+    # "0 rows" error the first time home() does a .single() lookup on a
+    # table that's missing its row. Checking only kubera_sessions used to
+    # miss the partial-seed case: the session row already existed, so it
+    # never re-ran, and every later request 500'd forever for that
+    # anon_id. Now it checks the three crash-critical tables too.
+    has_session = supabase.table("kubera_sessions").select("anon_id").eq("anon_id", anon_id).execute().data
+    has_wallet = supabase.table("kubera_wallets").select("anon_id").eq("anon_id", anon_id).execute().data
+    has_coins = supabase.table("kubera_coins").select("anon_id").eq("anon_id", anon_id).execute().data
+    has_streak = supabase.table("kubera_streaks").select("anon_id").eq("anon_id", anon_id).execute().data
+    if not has_session:
         supabase.table("kubera_sessions").insert({"anon_id": anon_id}).execute()
+    if not (has_wallet and has_coins and has_streak):
         seed_demo_account(anon_id)
     if "view_mode" not in session:
         session["view_mode"] = "teen"
+
+def table_has_row(table_name, anon_id):
+    return bool(supabase.table(table_name).select("anon_id").eq("anon_id", anon_id).limit(1).execute().data)
 
 def seed_demo_account(new_id):
         # Demo seed, locked 2026-11-09 (v2, replacing the simpler Day-13
@@ -85,31 +102,47 @@ def seed_demo_account(new_id):
         # does anything.
         starting_coins = 1000 + 2000 + 150000
 
-        supabase.table("kubera_wallets").insert({"anon_id": new_id, "balance": starting_wallet}).execute()
-        supabase.table("kubera_streaks").insert({
-            "anon_id": new_id,
-            "streak_count": 13,
-            "cushion_balance": saved_so_far,
-            "debt_remaining": 0,
-            "last_checkin": yesterday,
-        }).execute()
-        supabase.table("kubera_coins").insert({"anon_id": new_id, "current_coins": starting_coins}).execute()
-        supabase.table("kubera_badges").insert([
-            {"anon_id": new_id, "badge_type": "weekly_7", "earned_date": day7_date, "seen_by_teen": True},
-            {"anon_id": new_id, "badge_type": "milestone_100", "earned_date": day10_date, "seen_by_teen": True},
-            # Trophy badge for the already-verified 10th-boards milestone —
-            # keeps "My Badges" consistent with the Kubera Story's own
-            # "verify a milestone, get a trophy badge" promise.
-            {"anon_id": new_id, "badge_type": "trophy_150000", "earned_date": yesterday, "seen_by_teen": True},
-        ]).execute()
-        supabase.table("kubera_shields").insert({"anon_id": new_id, "earned_date": day7_date}).execute()
-        supabase.table("kubera_expenses").insert(seed_expenses).execute()
+        # Each insert below is guarded by an existence check — this
+        # function now also runs as a *repair* for a partially-seeded
+        # anon_id (see ensure_anon_session), where some of these tables
+        # already succeeded on an earlier, interrupted run. Blindly
+        # re-inserting would either duplicate rows (breaking every
+        # .single() call that assumes exactly one) or, for tables with a
+        # unique constraint, 500 on the conflict — either way worse than
+        # the bug this is fixing.
+        if not table_has_row("kubera_wallets", new_id):
+            supabase.table("kubera_wallets").insert({"anon_id": new_id, "balance": starting_wallet}).execute()
+        if not table_has_row("kubera_streaks", new_id):
+            supabase.table("kubera_streaks").insert({
+                "anon_id": new_id,
+                "streak_count": 13,
+                "cushion_balance": saved_so_far,
+                "debt_remaining": 0,
+                "last_checkin": yesterday,
+            }).execute()
+        if not table_has_row("kubera_coins", new_id):
+            supabase.table("kubera_coins").insert({"anon_id": new_id, "current_coins": starting_coins}).execute()
+        if not table_has_row("kubera_badges", new_id):
+            supabase.table("kubera_badges").insert([
+                {"anon_id": new_id, "badge_type": "weekly_7", "earned_date": day7_date, "seen_by_teen": True},
+                {"anon_id": new_id, "badge_type": "milestone_100", "earned_date": day10_date, "seen_by_teen": True},
+                # Trophy badge for the already-verified 10th-boards milestone —
+                # keeps "My Badges" consistent with the Kubera Story's own
+                # "verify a milestone, get a trophy badge" promise.
+                {"anon_id": new_id, "badge_type": "trophy_150000", "earned_date": yesterday, "seen_by_teen": True},
+            ]).execute()
+        if not table_has_row("kubera_shields", new_id):
+            supabase.table("kubera_shields").insert({"anon_id": new_id, "earned_date": day7_date}).execute()
+        if not table_has_row("kubera_expenses", new_id):
+            supabase.table("kubera_expenses").insert(seed_expenses).execute()
         # NOTE: every dict in this bulk insert carries the exact same keys
         # on purpose — PostgREST's bulk insert derives the batch's columns
         # from the first row, so any row missing a key gets NULL written
         # explicitly instead of falling back to the column's DB default
         # (bit us once already: the two "pending" rows 500'd on a missing
         # not-null "status" until this was made uniform).
+        if table_has_row("kubera_milestones", new_id):
+            return
         supabase.table("kubera_milestones").insert([
             {
                 "anon_id": new_id,
