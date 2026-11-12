@@ -2,6 +2,7 @@ import json
 import math
 import os
 import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from flask import Flask, session, redirect, request
@@ -15,6 +16,22 @@ app.secret_key = "replace-this-with-a-real-random-secret-later"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=365)
 
 supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+
+def with_retries(fn, attempts=3, delay=0.25):
+    # Supabase/Vercel occasionally hiccups on a single network round trip
+    # (cold start, transient DNS/connection blip) — on a request that
+    # makes several sequential calls (seeding a new account does ~7),
+    # one bad roll used to 500 the whole page. Retrying the one call that
+    # failed is cheap and absorbs almost all of that flakiness instead of
+    # crashing the user-facing request over it.
+    last_exc = None
+    for _ in range(attempts):
+        try:
+            return fn()
+        except Exception as e:
+            last_exc = e
+            time.sleep(delay)
+    raise last_exc
 
 @app.before_request
 def ensure_anon_session():
@@ -35,6 +52,7 @@ def ensure_anon_session():
     if anon_id is None:
         anon_id = str(uuid.uuid4())
         session["anon_id"] = anon_id
+        session["verified"] = False
 
     # The browser's cookie can outlive the account it points to (e.g.
     # after a database cleanup like 2026-11-09's), or seed_demo_account()
@@ -46,19 +64,28 @@ def ensure_anon_session():
     # miss the partial-seed case: the session row already existed, so it
     # never re-ran, and every later request 500'd forever for that
     # anon_id. Now it checks the three crash-critical tables too.
-    has_session = supabase.table("kubera_sessions").select("anon_id").eq("anon_id", anon_id).execute().data
-    has_wallet = supabase.table("kubera_wallets").select("anon_id").eq("anon_id", anon_id).execute().data
-    has_coins = supabase.table("kubera_coins").select("anon_id").eq("anon_id", anon_id).execute().data
-    has_streak = supabase.table("kubera_streaks").select("anon_id").eq("anon_id", anon_id).execute().data
-    if not has_session:
-        supabase.table("kubera_sessions").insert({"anon_id": anon_id}).execute()
-    if not (has_wallet and has_coins and has_streak):
-        seed_demo_account(anon_id)
+    #
+    # "verified" caches a clean bill of health *in the signed cookie
+    # itself* so this 4-query check only ever runs once per anon_id, not
+    # on every single request to every route — running it unconditionally
+    # on every request was adding real latency (and real failure surface)
+    # to pages that didn't need it at all, which is its own way to turn
+    # an occasional network hiccup into a user-visible 500.
+    if not session.get("verified"):
+        has_session = with_retries(lambda: supabase.table("kubera_sessions").select("anon_id").eq("anon_id", anon_id).execute().data)
+        has_wallet = with_retries(lambda: supabase.table("kubera_wallets").select("anon_id").eq("anon_id", anon_id).execute().data)
+        has_coins = with_retries(lambda: supabase.table("kubera_coins").select("anon_id").eq("anon_id", anon_id).execute().data)
+        has_streak = with_retries(lambda: supabase.table("kubera_streaks").select("anon_id").eq("anon_id", anon_id).execute().data)
+        if not has_session:
+            with_retries(lambda: supabase.table("kubera_sessions").insert({"anon_id": anon_id}).execute())
+        if not (has_wallet and has_coins and has_streak):
+            seed_demo_account(anon_id)
+        session["verified"] = True
     if "view_mode" not in session:
         session["view_mode"] = "teen"
 
 def table_has_row(table_name, anon_id):
-    return bool(supabase.table(table_name).select("anon_id").eq("anon_id", anon_id).limit(1).execute().data)
+    return bool(with_retries(lambda: supabase.table(table_name).select("anon_id").eq("anon_id", anon_id).limit(1).execute().data))
 
 def seed_demo_account(new_id):
         # Demo seed, locked 2026-11-09 (v2, replacing the simpler Day-13
@@ -111,30 +138,30 @@ def seed_demo_account(new_id):
         # unique constraint, 500 on the conflict — either way worse than
         # the bug this is fixing.
         if not table_has_row("kubera_wallets", new_id):
-            supabase.table("kubera_wallets").insert({"anon_id": new_id, "balance": starting_wallet}).execute()
+            with_retries(lambda: supabase.table("kubera_wallets").insert({"anon_id": new_id, "balance": starting_wallet}).execute())
         if not table_has_row("kubera_streaks", new_id):
-            supabase.table("kubera_streaks").insert({
+            with_retries(lambda: supabase.table("kubera_streaks").insert({
                 "anon_id": new_id,
                 "streak_count": 13,
                 "cushion_balance": saved_so_far,
                 "debt_remaining": 0,
                 "last_checkin": yesterday,
-            }).execute()
+            }).execute())
         if not table_has_row("kubera_coins", new_id):
-            supabase.table("kubera_coins").insert({"anon_id": new_id, "current_coins": starting_coins}).execute()
+            with_retries(lambda: supabase.table("kubera_coins").insert({"anon_id": new_id, "current_coins": starting_coins}).execute())
         if not table_has_row("kubera_badges", new_id):
-            supabase.table("kubera_badges").insert([
+            with_retries(lambda: supabase.table("kubera_badges").insert([
                 {"anon_id": new_id, "badge_type": "weekly_7", "earned_date": day7_date, "seen_by_teen": True},
                 {"anon_id": new_id, "badge_type": "milestone_100", "earned_date": day10_date, "seen_by_teen": True},
                 # Trophy badge for the already-verified 10th-boards milestone —
                 # keeps "My Badges" consistent with the Kubera Story's own
                 # "verify a milestone, get a trophy badge" promise.
                 {"anon_id": new_id, "badge_type": "trophy_150000", "earned_date": yesterday, "seen_by_teen": True},
-            ]).execute()
+            ]).execute())
         if not table_has_row("kubera_shields", new_id):
-            supabase.table("kubera_shields").insert({"anon_id": new_id, "earned_date": day7_date}).execute()
+            with_retries(lambda: supabase.table("kubera_shields").insert({"anon_id": new_id, "earned_date": day7_date}).execute())
         if not table_has_row("kubera_expenses", new_id):
-            supabase.table("kubera_expenses").insert(seed_expenses).execute()
+            with_retries(lambda: supabase.table("kubera_expenses").insert(seed_expenses).execute())
         # NOTE: every dict in this bulk insert carries the exact same keys
         # on purpose — PostgREST's bulk insert derives the batch's columns
         # from the first row, so any row missing a key gets NULL written
@@ -143,7 +170,7 @@ def seed_demo_account(new_id):
         # not-null "status" until this was made uniform).
         if table_has_row("kubera_milestones", new_id):
             return
-        supabase.table("kubera_milestones").insert([
+        with_retries(lambda: supabase.table("kubera_milestones").insert([
             {
                 "anon_id": new_id,
                 "title": "Score 90%+ in 10th board exams",
@@ -184,7 +211,7 @@ def seed_demo_account(new_id):
                 "seen_by_parent": False,
                 "seen_by_teen": False,
             },
-        ]).execute()
+        ]).execute())
 
 PAYEE_CATEGORY = {
     "Bombay Stationery": "shopping",
